@@ -93,7 +93,7 @@ def parseArgs():
         help="HuggingFace Model path",
     )
     parser.add_argument(
-        "--engine-dir", default="engine", help="Output directory for TensorRT engines"
+        "--engine-dir", default="/engines", help="Output directory for TensorRT engines"
     )
 
     parser.add_argument(

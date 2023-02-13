@@ -38,24 +38,20 @@ class VideoSDTrack(MediaStreamTrack):
 
     async def recv(self):
         frame = await self.track.recv()
-        if not self.generating:
-            
-            generating = True
-            # imgs = infer_trt(
-                # prompt="A person is walking down a street.",
-                # img_height= 384,
-                # img_width= 512,
-                # num_inference_steps = 20,
-                # guidance_scale = 7,
-                # seed=43)
 
-           
-            # rebuild a VideoFrame, preserving timing information
-            #new_frame = VideoFrame.from_image(imgs[0])
-            #new_frame.pts = original_frame.pts
-            #new_frame.time_base = original_frame.time_base
-            #frame = new_frame
-        return frame
+        imgs = infer_trt(
+            prompt="A person is walking down a street.",
+            img_height= 384,
+            img_width= 512,
+            num_inference_steps = 3,
+            guidance_scale = 7,
+            seed=43)
+
+        new_frame = VideoFrame.from_image(imgs[0])
+        new_frame.pts = frame.pts
+        new_frame.time_base = frame.time_base
+        frame = new_frame
+        return new_frame
 
 async def offer(request):
     params = await request.json()
@@ -162,7 +158,7 @@ if __name__ == "__main__":
     })
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
-    #load_trt()
+    load_trt()
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
     )

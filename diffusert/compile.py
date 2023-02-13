@@ -89,17 +89,17 @@ def parseArgs():
     )
     parser.add_argument(
         "--build-static-batch",
-        action="store_true",
+        action="store_false",
         help="Build TensorRT engines with fixed batch size",
     )
     parser.add_argument(
         "--build-dynamic-shape",
-        action="store_false",
+        action="store_true",
         help="Build TensorRT engines with dynamic image shapes",
     )
     parser.add_argument(
         "--build-preview-features",
-        action="store_true",
+        action="store_false",
         help="Build TensorRT engines with preview features",
     )
 
@@ -215,7 +215,7 @@ def compile_trt(
             else:
                 print(f"Found cached optimized model: {onnx_opt_path} ")
         # Build engine
-        
+        print(args)
         if not engine_path.exists():
             print("Building the TRT engine...")
             engine.build(
@@ -238,6 +238,7 @@ def compile_trt(
 if __name__ == "__main__":
     print("Building engine...")
     args = parseArgs()
+    print(args)
     compile_trt(
         model=args.model_path,
         img_height=args.height,

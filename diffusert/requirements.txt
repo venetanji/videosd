@@ -1,0 +1,18 @@
+--extra-index-url https://pypi.ngc.nvidia.com
+--extra-index-url https://download.pytorch.org/whl/cu117
+cuda-python
+colored
+diffusers
+scipy
+transformers
+ftfy
+tqdm
+accelerate
+torch==1.13.1+cu117
+torchvision
+nvtx
+onnx
+onnx-graphsurgeon
+onnxruntime
+polygraphy
+tensorrt

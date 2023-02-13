@@ -1,7 +1,7 @@
 services:
   builder:
 
-    image: voltaml:latest
+    image:  videosd:latest
     init: true
     environment:
       - LOG_LEVEL=INFO
@@ -12,6 +12,7 @@ services:
       - engines:/engines
       - onnx:/onnx
       - /c/users/giova/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/diffusert
     ports:
       - 8080:8080
     entrypoint: "sleep infinity"
