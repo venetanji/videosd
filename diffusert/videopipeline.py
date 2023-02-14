@@ -137,6 +137,7 @@ class VideoSDPipeline:
         self.engine = {}
         self.stream = cuda.Stream()
 
+
     def teardown(self):
         for engine in self.engine.values():
             del engine
@@ -159,6 +160,12 @@ class VideoSDPipeline:
         # Separate iteration to activate engines
         for model_name, obj in self.models.items():
             self.engine[model_name].activate()
+        
+        for model_name, obj in self.models.items():
+            self.engine[model_name].allocate_buffers(
+                shape_dict=obj.get_shape_dict(1, 384, 512),
+                device=self.device,
+            )
 
 
         gc.collect()
@@ -209,7 +216,8 @@ class VideoSDPipeline:
         num_of_infer_steps=50,
         scheduler=EulerAncestralDiscreteScheduler,
         init_image=None,
-        strength=0.7
+        strength=0.7,
+        display_timing=False
     ):
         """
         Run the diffusion pipeline.
@@ -259,11 +267,7 @@ class VideoSDPipeline:
                 events[stage + "-" + marker] = cudart.cudaEventCreate()[1]
 
         # Allocate buffers for TensorRT engine bindings
-        for model_name, obj in self.models.items():
-            self.engine[model_name].allocate_buffers(
-                shape_dict=obj.get_shape_dict(batch_size, image_height, image_width),
-                device=self.device,
-            )
+
 
         generator = None
         if seed is not None:
@@ -541,7 +545,7 @@ class VideoSDPipeline:
 
             torch.cuda.synchronize()
             e2e_toc = time.perf_counter()
-            if not warmup:
+            if display_timing:
                 print("|------------|--------------|")
                 print("| {:^10} | {:^12} |".format("Module", "Latency"))
                 print("|------------|--------------|")
@@ -586,32 +590,21 @@ class VideoSDPipeline:
                 )
                 print("|------------|--------------|")
 
-                # Save image
-                image_name_prefix = (
-                    "sd-"
-                    + ("fp16" if self.denoising_fp16 else "fp32")
-                    + "".join(
-                        set(
-                            [
-                                "-" + prompt[i].replace(" ", "_")[:10]
-                                for i in range(batch_size)
-                            ]
-                        )
+            
+            # Save image
+            image_name_prefix = (
+                "sd-"
+                + ("fp16" if self.denoising_fp16 else "fp32")
+                + "".join(
+                    set(
+                        [
+                            "-" + prompt[i].replace(" ", "_")[:10]
+                            for i in range(batch_size)
+                        ]
                     )
-                    + "-"
                 )
-                imgs = save_image(images, output_dir, image_name_prefix)
-
-                # websocket_manager.broadcast_sync(
-                #     Data(
-                #         data_type="txt2img",
-                #         data={
-                #             "progress": 0,
-                #             "current_step": 0,
-                #             "total_steps": 0,
-                #             "image": convert_image_to_base64(imgs[0]),
-                #         },
-                #     )
-                # )
+                + "-"
+            )
+            imgs = save_image(images, output_dir, image_name_prefix)
 
             return imgs

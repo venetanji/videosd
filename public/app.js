@@ -22,8 +22,11 @@
     let generating = false;
     const promptelement = document.getElementById("prompt");
 
+    // add listener to promptelement on input
+
 
     var pc = null;
+    var dc = null;
 
     function negotiate() {
         return pc.createOffer().then(function(offer) {
@@ -48,7 +51,7 @@
             offer.sdp = sdpFilterCodec('video', "H264/90000", offer.sdp)
             console.log(offer.sdp)
            
-            return fetch('http://localhost:8080/offer', {
+            return fetch('http://192.168.0.155:8080/offer', {
                 body: JSON.stringify({
                     sdp: offer.sdp,
                     type: offer.type,
@@ -73,11 +76,24 @@
             sdpSemantics: 'unified-plan'
         };
 
-        // if (document.getElementById('use-stun').checked) {
-        //     config.iceServers = [{urls: ['stun:stun.l.google.com:19302']}];
-        // }
+        //config.iceServers = [{urls: ['stun:stun.l.google.com:19302']}];
+        
         //@config.iceServers = [{urls: ['stun:stun.l.google.com:19302']}];
         pc = new RTCPeerConnection(config);
+
+        promptdc = pc.createDataChannel('prompt', {"ordered": true});
+        promptelement.oninput = function() {
+          promptdc.send(promptelement.value)
+        };
+
+
+
+        recorddc = pc.createDataChannel('record', {"ordered": true});
+        recorddc.onmessage = function(evt) {
+          promptelement.value = evt.data
+          promptelement.oninput()
+          console.log(evt.data)
+        };
 
         // connect audio / video
         pc.addEventListener('track', function(evt) {
@@ -137,43 +153,20 @@
           video.play();
           start(stream)
 
-          const mediaRecorder = new MediaRecorder(stream, options);
-          mediaRecorder.addEventListener('dataavailable', function(e) {
-            if (e.data.size > 0) recordedChunks.push(e.data);
-          });
-      
-          mediaRecorder.addEventListener('stop', function() {
-            audioblob = new Blob(recordedChunks);
-            const formData = new FormData()
-            formData.append('audio_file', audioblob)
-            fetch('http://192.168.0.155:9000/asr?task=transcribe&language=en&output=json', {
-              method: 'POST', // or 'PUT'
-              body: formData,
-            })
-            .then(r => r.json())
-            .then(data => {
-              promptelement.value = ''
-              promptelement.value = data.text
-              console.log(data)
-            })
-          });
-
           recordButton.addEventListener('mousedown', function() {
-            mediaRecorder.start();
+            recorddc.send("start")
           });
 
           recordButton.addEventListener('touchstart', function() {
-            mediaRecorder.start();
+            recorddc.send("start")
           });
       
           recordButton.addEventListener('mouseup', function() {
-              mediaRecorder.stop();
-              recordedChunks.splice(0, recordedChunks.length);
+            recorddc.send("stop")
           });
 
           recordButton.addEventListener('touchend', function() {
-            mediaRecorder.stop();
-            recordedChunks.splice(0, recordedChunks.length);
+            recorddc.send("stop")
           });
 
 
@@ -205,28 +198,7 @@
           console.error(`An error occurred: ${err}`);
         });
   
-      video.addEventListener(
-        "canplay",
-        (ev) => {
-          if (!streaming) {
-            height = video.videoHeight / (video.videoWidth / width);
   
-            // Firefox currently has a bug where the height can't be read from
-            // the video, so we will make assumptions if this happens.
-  
-            if (isNaN(height)) {
-              height = width / (4 / 3);
-            }
-  
-            // video.setAttribute("width", width);
-            // video.setAttribute("height", height);
-            canvas.setAttribute("width", width);
-            canvas.setAttribute("height", height);
-            streaming = true;
-        }
-      },
-      false
-    );
 
     startbutton.addEventListener(
       "click",

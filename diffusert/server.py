@@ -2,14 +2,20 @@ import argparse
 import asyncio
 import json
 import logging
+import io
 import os
 import ssl
 import uuid
+from scipy import io as sio
+import numpy as np
+#import whisper
+
+
 
 from videopipeline import VideoSDPipeline 
-from aiohttp import web
+from aiohttp import web, ClientSession
 import aiohttp_cors
-from av import VideoFrame
+from av import VideoFrame, AudioFifo
 
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
@@ -20,7 +26,54 @@ ROOT = os.path.dirname(__file__)
 logger = logging.getLogger("pc")
 pcs = set()
 relay = MediaRelay()
+bh = MediaBlackhole()
+videosd = None
 
+
+class STTTrack(MediaStreamTrack):
+    """
+    A track that receives audio frames from an another track and
+    sends them to a speech-to-text service.
+    """
+
+    kind = "audio"
+
+    def __init__(self, track):
+        super().__init__()  # don't forget this!
+        self.track = track
+        self.recording = False
+        self.recorder = AudioFifo()
+        self.text = None
+
+    def transcribe(self):
+
+        samples = self.recorder.read_many(1024)
+        sample_rate = samples[0].sample_rate
+        samples = np.array([x.to_ndarray() for x in samples])
+        samples = samples.flatten()
+        
+        sio.wavfile.write('/tmp/prompt.wav',sample_rate*2, samples)
+        self.audiofile = io.open('/tmp/prompt.wav','rb')
+        self.recorder = AudioFifo()
+
+    
+    async def fetch(self):
+        print("fetch")
+        async with ClientSession() as session:
+            url = 'http://192.168.0.155:9000/asr?task=transcribe&language=en&output=json'
+            async with session.post(url, data={'audio_file':self.audiofile}) as response:
+                response = await response.json()
+                self.text = response['text']
+                print(response)
+                return response['text']
+
+    async def recv(self):
+        frame = await self.track.recv()
+        if self.recording:
+            reframe = frame
+            reframe.pts = None
+            self.recorder.write(reframe)
+        return frame
 
 
 class VideoSDTrack(MediaStreamTrack):
@@ -38,11 +91,12 @@ class VideoSDTrack(MediaStreamTrack):
         self.generating = False
         self.current_frame = None
         self.gen_task = None
+        self.prompt = "A photo of a cat"
     
     def diffuse(self,frame):
         
         imgs = trt_model.infer(
-            prompt=["under water"],
+            prompt=[self.prompt],
             num_of_infer_steps = 20,
             guidance_scale = 7,
             init_image= frame.to_image(),
@@ -50,7 +104,6 @@ class VideoSDTrack(MediaStreamTrack):
             seed=43)
         self.generating = False
         self.current_frame = VideoFrame.from_image(imgs[0])
-
 
     async def recv(self):
         frame = await self.track.recv()
@@ -62,13 +115,6 @@ class VideoSDTrack(MediaStreamTrack):
         self.current_frame.pts = frame.pts
         self.current_frame.time_base = frame.time_base
         return self.current_frame
-
-        new_frame = VideoFrame.from_image(imgs[0])
-        new_frame.pts = frame.pts
-        new_frame.time_base = frame.time_base
-        frame = new_frame
-        self.track.resume()
-        return new_frame
 
 async def offer(request):
     params = await request.json()
@@ -82,6 +128,32 @@ async def offer(request):
         logger.info(pc_id + " " + msg, *args)
 
     log_info("Created for %s", request.remote)
+    prompt = ["A photo of a cat"]
+    tracks = {'audio': None, 'video': None}
+    spoken_prompt = AudioFifo()
+
+
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        print(channel.label)
+        if channel.label == "prompt":
+            @channel.on("message")
+            def on_message(message):
+                tracks['video'].prompt = message
+                print(message)
+        elif channel.label == "record":
+            @channel.on("message")
+            def on_message(message):
+                if message == "start":
+                    tracks['audio'].recording = True
+                    print("start recording")
+                elif message == "stop":
+                    tracks['audio'].recording = False
+                    yield from asyncio.get_running_loop().run_in_executor(None, tracks['audio'].transcribe)
+                    task = asyncio.create_task(tracks['audio'].fetch())
+                    task.add_done_callback(lambda x: channel.send(task.result()))
+                    print("stop recording")
+
 
 
     @pc.on("connectionstatechange")
@@ -94,26 +166,29 @@ async def offer(request):
     @pc.on("track")
     def on_track(track):
         log_info("Track %s received", track.kind)
-
+        
         if track.kind == "video":
-            pc.addTrack(
-                VideoSDTrack(
-                    relay.subscribe(track), options=params["options"]
-                )
-            )
+            tracks['video'] = VideoSDTrack(track, params["options"])
+            pc.addTrack(tracks['video'])
 
+        if track.kind == "audio":
+            tracks['audio'] = STTTrack(track)
+            bh.addTrack(tracks['audio'])
+            
+            print('audiotrack')
 
         @track.on("ended")
         async def on_ended():
             log_info("Track %s ended", track.kind)
-            # await recorder.stop()
+            await bh.stop()
 
     # handle offer
     await pc.setRemoteDescription(offer)
-    # await recorder.start()
+    await bh.start()
 
     # send answer
     answer = await pc.createAnswer()
+    print(answer)
     await pc.setLocalDescription(answer)
 
     return web.Response(
@@ -123,13 +198,11 @@ async def offer(request):
         ),
     )
 
-
 async def on_shutdown(app):
     # close peer connections
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -172,6 +245,7 @@ if __name__ == "__main__":
     trt_model = VideoSDPipeline()
     trt_model.loadEngines()
     trt_model.loadModules()
+
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
     )
