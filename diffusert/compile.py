@@ -36,7 +36,7 @@ def parseArgs():
     )
     # parser.add_argument('--num-images', type=int, default=1, help="Number of images to generate per prompt")
     parser.add_argument(
-        "--denoising-steps", type=int, default=50, help="Number of denoising steps"
+        "--denoising-steps", type=int, default=20, help="Number of denoising steps"
     )
     parser.add_argument(
         "--denoising-prec",
@@ -58,18 +58,8 @@ def parseArgs():
         "--onnx-dir", default="/onnx", help="Output directory for ONNX export"
     )
     parser.add_argument(
-        "--force-onnx-export",
-        action="store_true",
-        help="Force ONNX export of CLIP, UNET, and VAE models",
-    )
-    parser.add_argument(
-        "--force-onnx-optimize",
-        action="store_true",
-        help="Force ONNX optimizations for CLIP, UNET, and VAE models",
-    )
-    parser.add_argument(
         "--onnx-minimal-optimization",
-        action="store_false",
+        action="store_true",
         help="Restrict ONNX optimization to const folding and shape inference",
     )
 
@@ -82,16 +72,7 @@ def parseArgs():
     parser.add_argument(
         "--engine-dir", default="/engines", help="Output directory for TensorRT engines"
     )
-    parser.add_argument(
-        "--force-engine-build",
-        action="store_true",
-        help="Force rebuilding the TensorRT engine",
-    )
-    parser.add_argument(
-        "--build-static-batch",
-        action="store_false",
-        help="Build TensorRT engines with fixed batch size",
-    )
+
     parser.add_argument(
         "--build-dynamic-shape",
         action="store_true",
@@ -99,7 +80,7 @@ def parseArgs():
     )
     parser.add_argument(
         "--build-preview-features",
-        action="store_false",
+        action="store_true",
         help="Build TensorRT engines with preview features",
     )
 
@@ -160,13 +141,7 @@ def compile_trt(
                 device=device,
                 verbose=verbose,
                 max_batch_size=max_batch_size,
-            ),
-            "vaeencode": VAEEncode(
-                hf_token=hf_token,
-                device=device,
-                verbose=verbose,
-                max_batch_size=max_batch_size,
-            ),
+            )
         }
     
 
@@ -216,7 +191,7 @@ def compile_trt(
             else:
                 print(f"Found cached optimized model: {onnx_opt_path} ")
         # Build engine
-        print(args)
+
         if not engine_path.exists():
             print("Building the TRT engine...")
             engine.build(
@@ -226,7 +201,7 @@ def compile_trt(
                     1,
                     img_height,
                     img_width,
-                    static_batch=args.build_static_batch,
+                    static_batch=True,
                     static_shape=not args.build_dynamic_shape,
                 ),
                 enable_preview=args.build_preview_features,
@@ -239,7 +214,6 @@ def compile_trt(
 if __name__ == "__main__":
     print("Building engine...")
     args = parseArgs()
-    print(args)
     compile_trt(
         model=args.model_path,
         img_height=args.height,

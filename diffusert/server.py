@@ -6,6 +6,7 @@ import os
 import ssl
 import uuid
 
+from videopipeline import VideoSDPipeline 
 from aiohttp import web
 import aiohttp_cors
 from av import VideoFrame
@@ -35,22 +36,38 @@ class VideoSDTrack(MediaStreamTrack):
         self.track = track
         self.options = options
         self.generating = False
+        self.current_frame = None
+        self.gen_task = None
+    
+    def diffuse(self,frame):
+        
+        imgs = trt_model.infer(
+            prompt=["under water"],
+            num_of_infer_steps = 20,
+            guidance_scale = 7,
+            init_image= frame.to_image(),
+            strength = 0.4,
+            seed=43)
+        self.generating = False
+        self.current_frame = VideoFrame.from_image(imgs[0])
+
 
     async def recv(self):
         frame = await self.track.recv()
-
-        imgs = infer_trt(
-            prompt="A person is walking down a street.",
-            img_height= 384,
-            img_width= 512,
-            num_inference_steps = 3,
-            guidance_scale = 7,
-            seed=43)
+        if not self.generating:
+            self.generating = True
+            if not self.current_frame:
+                self.current_frame = frame
+            asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame)
+        self.current_frame.pts = frame.pts
+        self.current_frame.time_base = frame.time_base
+        return self.current_frame
 
         new_frame = VideoFrame.from_image(imgs[0])
         new_frame.pts = frame.pts
         new_frame.time_base = frame.time_base
         frame = new_frame
+        self.track.resume()
         return new_frame
 
 async def offer(request):
@@ -66,13 +83,6 @@ async def offer(request):
 
     log_info("Created for %s", request.remote)
 
-
-    @pc.on("datachannel")
-    def on_datachannel(channel):
-        @channel.on("message")
-        def on_message(message):
-            if isinstance(message, str) and message.startswith("ping"):
-                channel.send("pong" + message[4:])
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -158,7 +168,10 @@ if __name__ == "__main__":
     })
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
-    load_trt()
+
+    trt_model = VideoSDPipeline()
+    trt_model.loadEngines()
+    trt_model.loadModules()
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
     )

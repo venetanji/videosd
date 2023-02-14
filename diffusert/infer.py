@@ -61,7 +61,7 @@ def parseArgs():
     parser.add_argument(
         "--height",
         type=int,
-        default=512,
+        default=384,
         help="Height of image to generate (must be multiple of 8)",
     )
     parser.add_argument(
@@ -198,7 +198,7 @@ def infer_trt(
         raise ValueError(
             f"Image height and width have to be divisible by 8 but specified as: {image_height} and {image_width}."
         )
-    load_trt(model)
+    #load_trt(model)
 
     images = trt_model.infer(
         prompt,

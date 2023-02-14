@@ -1418,8 +1418,9 @@ class VAEEncode(BaseModel):
             batch_size, image_height, image_width
         )
         return {
-            "latent": (batch_size, 4, latent_height, latent_width),
             "images": (batch_size, 3, image_height, image_width),
+            "latent": (batch_size, 4, latent_height, latent_width)
+            
         }
 
     def get_sample_input(self, batch_size, image_height, image_width):
@@ -1454,12 +1455,12 @@ class VAEEncode(BaseModel):
         if bRemoveCastNode:
             num_casts_removed = opt.remove_casts()
             opt.info("VAE: removed " + str(num_casts_removed) + " casts")
-
+        print("optimize")
         opt.cleanup()
         opt.info("VAE: cleanup")
         opt.fold_constants()
-        opt.info("VAE: fold constants")
-        opt.infer_shapes()
+        opt.info("VAE: not fold constants")
+        #opt.infer_shapes()
         opt.info("VAE: shape inference")
 
         if bGroupNormPlugin:

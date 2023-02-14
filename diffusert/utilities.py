@@ -103,11 +103,15 @@ class Engine:
 
     def allocate_buffers(self, shape_dict=None, device="cuda"):
         for idx in range(trt_util.get_bindings_per_profile(self.engine)):
+            
             binding = self.engine[idx]
+            print("binding", binding)
+            print("shape_dict", shape_dict)
             if shape_dict and binding in shape_dict:
                 shape = shape_dict[binding]
             else:
                 shape = self.engine.get_binding_shape(binding)
+            print("shape", shape)
             dtype = trt_util.np_dtype_from_trt(self.engine.get_binding_dtype(binding))
             if self.engine.binding_is_input(binding):
                 self.context.set_binding_shape(idx, shape)
@@ -118,6 +122,7 @@ class Engine:
                 device=device
             )
             self.tensors[binding] = tensor
+            print("tensor", tensor)
             self.buffers[binding] = cuda.DeviceView(
                 ptr=tensor.data_ptr(), shape=shape, dtype=dtype
             )
@@ -672,7 +677,7 @@ def preprocess_image(image):
         w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
 
         image = [
-            np.array(i.resize((w, h), resample=PIL_INTERPOLATION["lanczos"]))[None, :]  # type: ignore
+            np.array(i.resize((w, h), resample=Image.LANCZOS))[None, :]  # type: ignore
             for i in image
         ]
         image = np.concatenate(image, axis=0)

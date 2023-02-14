@@ -21,24 +21,25 @@ from utilities import TRT_LOGGER, Engine
 from PIL import Image
 from transformers import CLIPTokenizer
 from diffusers.schedulers.scheduling_euler_ancestral_discrete import EulerAncestralDiscreteScheduler
+from diffusers.models.autoencoder_kl import AutoencoderKL
+
 
 
 import onnx
 from utilities import TRT_LOGGER, Engine, save_image
 
-#from core.functions import preprocess_image
-from diffusers.models.autoencoder_kl import AutoencoderKL
+from utilities import preprocess_image
 
 
 
 class VideoSDPipeline:
     """
-    Application showcasing the acceleration of Stable Diffusion v1.4 pipeline using NVidia TensorRT w/ Plugins.
+    Streamlined tensorrt pipeline for stable diffusion
     """
 
     def __init__(
         self,
-        denoising_steps,
+        denoising_steps=50,
         scheduler=EulerAncestralDiscreteScheduler,
         guidance_scale=7.5,
         eta=0.0,
@@ -101,7 +102,7 @@ class VideoSDPipeline:
         }
 
         self.scheduler = scheduler.from_config(sched_opts)
-
+        self.previous_prompt = ""
         self.tokenizer = None
         self.models = {
             "clip": CLIP(
@@ -123,13 +124,14 @@ class VideoSDPipeline:
                 device=device,
                 verbose=verbose,
                 max_batch_size=1,
-            ),
-            "vaeencode": VAEEncode(
-                hf_token=hf_token,
-                device=device,
-                verbose=verbose,
-                max_batch_size=1,
-            ),
+            )
+            # ),
+            # "vaeencode": VAEEncode(
+            #     hf_token=hf_token,
+            #     device=device,
+            #     verbose=verbose,
+            #     max_batch_size=1,
+            # ),
         }
 
         self.engine = {}
@@ -146,7 +148,7 @@ class VideoSDPipeline:
 
     def loadEngines(
         self,
-        engine_dir,
+        engine_dir="/engines/runwayml/stable-diffusion-v1-5",
     ):
         
         # Build engines
@@ -195,9 +197,9 @@ class VideoSDPipeline:
     def infer(
         self,
         prompt,
-        negative_prompt,
-        image_height,
-        image_width,
+        negative_prompt=[""],
+        image_height=384,
+        image_width=512,
         guidance_scale=7.5,
         eta=0.0,
         warmup=False,
@@ -290,10 +292,11 @@ class VideoSDPipeline:
                 dtype=latents_dtype,
                 generator=generator,
             )
+
             
             self.scheduler.set_timesteps(self.denoising_steps, device=self.device)
             # latents = latents * self.scheduler.init_noise_sigma
-            print(self.scheduler.init_noise_sigma)
+            #print(self.scheduler.init_noise_sigma)
 
             if init_image is not None:
                 tail = - int(round(strength * num_of_infer_steps))
@@ -304,17 +307,23 @@ class VideoSDPipeline:
                 cudart.cudaEventRecord(events["encode-start"], 0)
                 init_image = preprocess_image(init_image)
                 init_image = init_image.to(self.device)
-                print(init_image)
-                print(init_image.shape)
-                init_image_inp = cuda.DeviceView(
-                    ptr=init_image.data_ptr(),
-                    shape=init_image.shape,
-                    dtype=np.float32,
-                )
-                init_latent_trt = self.runEngine("vaeencode", {"images": init_image_inp})["latent"]
+                #print(init_image)
+                #print(init_image.shape)
+                # init_image_inp = cuda.DeviceView(
+                #     ptr=init_image.data_ptr(),
+                #     shape=init_image.shape,
+                #     dtype=np.float32,
+                # )
+                # init_latent = torch.randn(
+                #     latents_shape,
+                #     device=self.device,
+                #     dtype=latents_dtype,
+                #     generator=generator,
+                # )
+                #init_latent = self.runEngine("vaeencode", {"images": init_image_inp})["latent"]
                 #print(init_latent_trt.dtype)
                 init_latent = self.vae.encode(init_image).latent_dist.sample()
-                #init_latent_trt = init_latent_trt * self.scheduler.sigmas[0]
+
                 #print(init_latent_trt)
                 #print(init_latent.dtype)
                 #print(init_latent)
@@ -340,94 +349,100 @@ class VideoSDPipeline:
             torch.cuda.synchronize()
             e2e_tic = time.perf_counter()
 
-            if self.nvtx_profile:
-                nvtx_clip = nvtx.start_range(message="clip", color="green")
-            cudart.cudaEventRecord(events["clip-start"], 0)
-
-            # Tokenize input
-            text_input_ids = (
-                self.tokenizer(
-                    prompt,
-                    padding="max_length",
-                    max_length=self.tokenizer.model_max_length,
-                    return_tensors="pt",
-                )
-                .input_ids.type(torch.int32)
-                .to(self.device)
-            )
-
-            # CLIP text encoder
-            text_input_ids_inp = cuda.DeviceView(
-                ptr=text_input_ids.data_ptr(),
-                shape=text_input_ids.shape,
-                dtype=np.int32,
-            )
-            text_embeddings = self.runEngine("clip", {"input_ids": text_input_ids_inp})[
-                "text_embeddings"
-            ]
-
-            # Duplicate text embeddings for each generation per prompt
-            bs_embed, seq_len, _ = text_embeddings.shape
-            text_embeddings = text_embeddings.repeat(1, self.num_images, 1)
-            text_embeddings = text_embeddings.view(
-                bs_embed * self.num_images, seq_len, -1
-            )
-
             do_classifier_free_guidance = guidance_scale > 1.0
 
-            if do_classifier_free_guidance:
-                uncond_tokens: List[str]
-                if negative_prompt is None:
-                    uncond_tokens = [""] * batch_size
-                elif type(prompt) is not type(negative_prompt):
-                    raise TypeError(
-                        f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
-                        f" {type(prompt)}."
-                    )
-                elif isinstance(negative_prompt, str):
-                    uncond_tokens = [negative_prompt]
-                elif batch_size != len(negative_prompt):
-                    raise ValueError(
-                        f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
-                        f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
-                        " the batch size of `prompt`."
-                    )
-                else:
-                    uncond_tokens = negative_prompt
+            if self.nvtx_profile:
+                nvtx_clip = nvtx.start_range(message="clip", color="green")
 
-                max_length = text_input_ids.shape[-1]
-                uncond_input_ids = (
+            if self.previous_prompt != prompt:
+                self.previous_prompt = prompt
+
+                cudart.cudaEventRecord(events["clip-start"], 0)
+
+                # Tokenize input
+                self.text_input_ids = (
                     self.tokenizer(
-                        uncond_tokens,
+                        prompt,
                         padding="max_length",
-                        max_length=max_length,
-                        truncation=True,
+                        max_length=self.tokenizer.model_max_length,
                         return_tensors="pt",
                     )
                     .input_ids.type(torch.int32)
                     .to(self.device)
                 )
-                uncond_input_ids_inp = cuda.DeviceView(
-                    ptr=uncond_input_ids.data_ptr(),
-                    shape=uncond_input_ids.shape,
+
+                # CLIP text encoder
+                text_input_ids_inp = cuda.DeviceView(
+                    ptr=self.text_input_ids.data_ptr(),
+                    shape=self.text_input_ids.shape,
                     dtype=np.int32,
                 )
-                uncond_embeddings = self.runEngine(
-                    "clip", {"input_ids": uncond_input_ids_inp}
-                )["text_embeddings"]
+                self.text_embeddings = self.runEngine("clip", {"input_ids": text_input_ids_inp})[
+                    "text_embeddings"
+                ]
 
-                # Duplicate unconditional embeddings for each generation per prompt
-                seq_len = uncond_embeddings.shape[1]
-                uncond_embeddings = uncond_embeddings.repeat(1, self.num_images, 1)
-                uncond_embeddings = uncond_embeddings.view(
-                    batch_size * self.num_images, seq_len, -1
+                # Duplicate text embeddings for each generation per prompt
+                bs_embed, seq_len, _ = self.text_embeddings.shape
+                self.text_embeddings = self.text_embeddings.repeat(1, self.num_images, 1)
+                self.text_embeddings = self.text_embeddings.view(
+                    bs_embed * self.num_images, seq_len, -1
                 )
 
-                # Concatenate the unconditional and text embeddings into a single batch to avoid doing two forward passes for classifier free guidance
-                text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+                
 
-            if self.denoising_fp16:
-                text_embeddings = text_embeddings.to(dtype=torch.float16)
+                if do_classifier_free_guidance:
+                    uncond_tokens: List[str]
+                    if negative_prompt is None:
+                        uncond_tokens = [""] * batch_size
+                    elif type(prompt) is not type(negative_prompt):
+                        raise TypeError(
+                            f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
+                            f" {type(prompt)}."
+                        )
+                    elif isinstance(negative_prompt, str):
+                        uncond_tokens = [negative_prompt]
+                    elif batch_size != len(negative_prompt):
+                        raise ValueError(
+                            f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
+                            f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
+                            " the batch size of `prompt`."
+                        )
+                    else:
+                        uncond_tokens = negative_prompt
+
+                    max_length = self.text_input_ids.shape[-1]
+                    uncond_input_ids = (
+                        self.tokenizer(
+                            uncond_tokens,
+                            padding="max_length",
+                            max_length=max_length,
+                            truncation=True,
+                            return_tensors="pt",
+                        )
+                        .input_ids.type(torch.int32)
+                        .to(self.device)
+                    )
+                    uncond_input_ids_inp = cuda.DeviceView(
+                        ptr=uncond_input_ids.data_ptr(),
+                        shape=uncond_input_ids.shape,
+                        dtype=np.int32,
+                    )
+                    uncond_embeddings = self.runEngine(
+                        "clip", {"input_ids": uncond_input_ids_inp}
+                    )["text_embeddings"]
+
+                    # Duplicate unconditional embeddings for each generation per prompt
+                    seq_len = uncond_embeddings.shape[1]
+                    uncond_embeddings = uncond_embeddings.repeat(1, self.num_images, 1)
+                    uncond_embeddings = uncond_embeddings.view(
+                        batch_size * self.num_images, seq_len, -1
+                    )
+
+                    # Concatenate the unconditional and text embeddings into a single batch to avoid doing two forward passes for classifier free guidance
+                    self.text_embeddings = torch.cat([uncond_embeddings, self.text_embeddings])
+
+                if self.denoising_fp16:
+                    self.text_embeddings = self.text_embeddings.to(dtype=torch.float16)
 
             cudart.cudaEventRecord(events["clip-stop"], 0)
             if self.nvtx_profile:
@@ -475,8 +490,8 @@ class VideoSDPipeline:
                     dtype=np.float32,
                 )
                 embeddings_inp = cuda.DeviceView(
-                    ptr=text_embeddings.data_ptr(),
-                    shape=text_embeddings.shape,
+                    ptr=self.text_embeddings.data_ptr(),
+                    shape=self.text_embeddings.shape,
                     dtype=dtype,
                 )
                 noise_pred = self.runEngine(
@@ -585,7 +600,7 @@ class VideoSDPipeline:
                     )
                     + "-"
                 )
-                imgs = save_image(images, output_dir, image_name_prefix, True)
+                imgs = save_image(images, output_dir, image_name_prefix)
 
                 # websocket_manager.broadcast_sync(
                 #     Data(
