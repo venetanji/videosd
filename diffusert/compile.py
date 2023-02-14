@@ -55,7 +55,7 @@ def parseArgs():
         help="Select ONNX opset version to target for exported models",
     )
     parser.add_argument(
-        "--onnx-dir", default="onnx", help="Output directory for ONNX export"
+        "--onnx-dir", default="/onnx", help="Output directory for ONNX export"
     )
     parser.add_argument(
         "--force-onnx-export",
@@ -80,7 +80,7 @@ def parseArgs():
         help="HuggingFace Model path",
     )
     parser.add_argument(
-        "--engine-dir", default="engine", help="Output directory for TensorRT engines"
+        "--engine-dir", default="/engines", help="Output directory for TensorRT engines"
     )
     parser.add_argument(
         "--force-engine-build",
@@ -122,10 +122,11 @@ def compile_trt(
     img_width
 ):
 
-    print("[I] Initializing StableDiffusion demo with TensorRT Plugins")
     args = parseArgs()
+    print("[I] Building TensorRT engine with args:", args)
 
-    print(model)
+
+    print("[I] Model: ", model)
     
     engines_dir = Path(args.engine_dir)
     engines_dir.mkdir(parents=True, exist_ok=True)

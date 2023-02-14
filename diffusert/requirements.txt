@@ -16,3 +16,6 @@ onnx-graphsurgeon
 onnxruntime
 polygraphy
 tensorrt
+aiortc
+aiohttp
+aiohttp_cors

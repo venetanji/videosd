@@ -26,7 +26,7 @@ from diffusers.models.autoencoder_kl import AutoencoderKL
 from videopipeline import VideoSDPipeline
 import onnx
 
-#from core.functions import preprocess_image
+from utilities import preprocess_image
 
 os.environ["TORCH_CUDNN_V8_API_ENABLED"] = "1"
 os.environ["CUDA_MODULE_LOADING"] = "LAZY"
@@ -37,7 +37,7 @@ def parseArgs():
     parser = argparse.ArgumentParser(description="Options for Stable Diffusion Demo")
     # Stable Diffusion configuration
     parser.add_argument(
-        "--prompt", nargs="*", help="Text prompt(s) to guide image generation"
+        "--prompt", nargs="*", default="A drawing of a castle in the clouds", help="Text prompt(s) to guide image generation"
     )
     parser.add_argument(
         "--init-image", nargs="*", help="Init image"
@@ -198,7 +198,7 @@ def infer_trt(
         raise ValueError(
             f"Image height and width have to be divisible by 8 but specified as: {image_height} and {image_width}."
         )
-    #load_trt(model)
+    load_trt(model)
 
     images = trt_model.infer(
         prompt,
