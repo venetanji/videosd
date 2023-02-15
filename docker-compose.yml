@@ -1,41 +1,69 @@
+
+x-base: &x-base
+  init: true
+  environment:
+    - LOG_LEVEL=INFO
+  volumes:
+    - ./diffusert:/workspace/diffusert/
+    - engines:/engines
+    - onnx:/onnx
+    - ~/.cache/huggingface:/root/.cache/huggingface
+  working_dir: /workspace/diffusert
+
+x-gpu: &x-gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            capabilities: ["gpu"]
+
 services:
   whisper:
+    <<: *x-gpu    
     image: onerahmet/openai-whisper-asr-webservice:latest-gpu
     environment:
       - ASR_MODEL=small
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: ["gpu"]
+    profiles:
+      - production
+      - dev
+
   frontend:
     image: nginx
     volumes:
       - ./public:/usr/share/nginx/html
     ports:
       - 80:80
+    profiles:
+      - production
 
   backend:
+    <<: *x-base
+    <<: *x-gpu
     build: .
-    init: true
-    environment:
-      - LOG_LEVEL=INFO
-    volumes:
-      - ./diffusert:/workspace/diffusert/
-      - engines:/engines
-      - onnx:/onnx
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    working_dir: /workspace/diffusert
+    entrypoint: "python server.py"
     ports:
       - 8080:8080
-    entrypoint: "python server.py"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: ["gpu"]
+    profiles:
+      - production
+  
+  backend-dev:
+    <<: *x-base
+    <<: *x-gpu
+    image: videosd-backend
+    entrypoint: "sleep infinity"
+    ports:
+      - 8080:8080
+    profiles:
+      - dev
+
+  compile:
+    <<: *x-base
+    <<: *x-gpu
+    image: videosd-backend
+    entrypoint: "python compile.py"
+    profiles:
+      - compile
 
 volumes:
   engines:

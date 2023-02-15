@@ -79,9 +79,9 @@ def parseArgs():
         help="Build TensorRT engines with dynamic image shapes",
     )
     parser.add_argument(
-        "--build-preview-features",
+        "--disable-preview-features",
         action="store_true",
-        help="Build TensorRT engines with preview features",
+        help="Disable TensorRT preview features",
     )
 
     # TensorRT inference
@@ -183,10 +183,18 @@ def compile_trt(
             # Optimize onnx
             if not os.path.exists(onnx_opt_path):
                 print(f"Generating optimizing model: {onnx_opt_path}")
-                onnx_opt_graph = obj.optimize(
-                    onnx.load(onnx_path),
-                    minimal_optimization=args.onnx_minimal_optimization,
-                )
+                try:
+                    onnx_opt_graph = obj.optimize(
+                        onnx.load(onnx_path),
+                        minimal_optimization=args.onnx_minimal_optimization,
+                    )
+                except:
+                    print("Failed to optimize model, falling back to minimal optimization")
+                    onnx_opt_graph = obj.optimize(
+                        onnx.load(onnx_path),
+                        minimal_optimization=True,
+                    )
+
                 onnx.save(onnx_opt_graph, onnx_opt_path)
             else:
                 print(f"Found cached optimized model: {onnx_opt_path} ")
@@ -204,7 +212,7 @@ def compile_trt(
                     static_batch=True,
                     static_shape=not args.build_dynamic_shape,
                 ),
-                enable_preview=args.build_preview_features,
+                enable_preview=not args.disable_preview_features,
             )
 
         
