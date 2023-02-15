@@ -19,7 +19,6 @@ from av import VideoFrame, AudioFifo
 
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
-from infer import load_trt, infer_trt
 
 ROOT = os.path.dirname(__file__)
 

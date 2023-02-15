@@ -11,12 +11,10 @@ services:
               capabilities: ["gpu"]
 
   videosd:
-    image:  videosd:latest
+    build: .
     init: true
     environment:
       - LOG_LEVEL=INFO
-    # stdin_open: true # docker run -i
-    # tty: true 
     volumes:
       - ./diffusert:/workspace/diffusert/
       - engines:/engines
