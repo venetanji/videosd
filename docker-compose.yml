@@ -10,7 +10,7 @@ services:
             - driver: nvidia
               capabilities: ["gpu"]
 
-  videosd:
+  backend:
     build: .
     init: true
     environment:
