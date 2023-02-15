@@ -30,4 +30,4 @@ npm install
 node index.js
 ```
 
-Serve the app with express on port 3000
+Serve the app with express on port 3000. You can then attach vscode to the dev container. To start the server run `python server.py` within the container.
