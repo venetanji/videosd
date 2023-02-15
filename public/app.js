@@ -55,7 +55,7 @@
               "strength": parseFloat(strength.value)
             }
            
-            return fetch(`http://${host}:8080/offer`, {
+            return fetch('/offer', {
                 body: JSON.stringify({
                     sdp: offer.sdp,
                     type: offer.type,

@@ -145,6 +145,7 @@ def compile_trt(
         export_onnx(onnx_path, trtmodel, img_width, img_height)
         optimize_onnx(onnx_path, trtmodel, onnx_opt_path)
     
+    # Clear CUDA cache to avoid OOM errors during engine build
     torch.cuda.empty_cache()
 
     for model, trtmodel in models.items():  

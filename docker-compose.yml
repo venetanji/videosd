@@ -28,16 +28,26 @@ services:
       - production
       - dev
 
-  frontend:
+  frontend: &frontend
     image: nginx
     volumes:
       - ./public:/usr/share/nginx/html
+      - ./configs/nginx.conf:/etc/nginx/templates/default.conf.template
     ports:
       - 80:80
+    environment:
+      - BACKEND_HOST=backend
     profiles:
       - production
 
-  backend:
+  frontend-dev:
+    <<: *frontend
+    environment:
+      - BACKEND_HOST=backend-dev
+    profiles:
+      - dev
+
+  backend: &backend
     <<: *x-base
     <<: *x-gpu
     build: .
@@ -48,18 +58,14 @@ services:
       - production
   
   backend-dev:
-    <<: *x-base
-    <<: *x-gpu
+    <<: *backend
     image: videosd-backend
     entrypoint: "sleep infinity"
-    ports:
-      - 8080:8080
     profiles:
       - dev
 
   compile:
-    <<: *x-base
-    <<: *x-gpu
+    <<: *backend
     image: videosd-backend
     entrypoint: "python compile.py"
     profiles:
