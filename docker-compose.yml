@@ -9,6 +9,12 @@ services:
           devices:
             - driver: nvidia
               capabilities: ["gpu"]
+  frontend:
+    image: nginx
+    volumes:
+      - ./public:/usr/share/nginx/html
+    ports:
+      - 80:80
 
   backend:
     build: .
@@ -23,7 +29,7 @@ services:
     working_dir: /workspace/diffusert
     ports:
       - 8080:8080
-    entrypoint: "sleep infinity"
+    entrypoint: "python server.py"
     deploy:
       resources:
         reservations:
