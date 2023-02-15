@@ -2,7 +2,7 @@
 
 TensorRT accelerated diffusion pipeline, combined with webrtc frontend for camera input and speech recognition.
 
-# Compile the engine
+# Compile the engines
 
 ```
 docker compose build backend
