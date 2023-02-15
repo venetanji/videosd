@@ -1,20 +1,13 @@
 import argparse
 import gc
 from pathlib import Path
-import io
 import os
-import shutil
-import time
 from typing import List
 
-import numpy as np
-import nvtx
 import tensorrt as trt
 import torch
-import tqdm
-from cuda import cudart
 from polygraphy import cuda
-from models import CLIP, VAE, UNet, VAEEncode
+from models import CLIP, VAE, UNet
 import onnx
 from utilities import TRT_LOGGER, Engine
 
@@ -79,7 +72,7 @@ def parseArgs():
         help="Build TensorRT engines with dynamic image shapes",
     )
     parser.add_argument(
-        "--disable-preview-features",
+        "--enable-preview-features",
         action="store_true",
         help="Disable TensorRT preview features",
     )
@@ -106,7 +99,6 @@ def compile_trt(
     args = parseArgs()
     print("[I] Building TensorRT engine with args:", args)
 
-
     print("[I] Model: ", model)
     
     engines_dir = Path(args.engine_dir)
@@ -122,16 +114,16 @@ def compile_trt(
     hf_token = args.hf_token
     max_batch_size = 1
     models = {
-            "clip": CLIP(
-                hf_token=hf_token,
-                device=device,
-                verbose=verbose,
-                max_batch_size=max_batch_size,
-            ),
             "unet_fp16": UNet(
                 model_path=model,
                 hf_token=hf_token,
                 fp16=True,
+                device=device,
+                verbose=verbose,
+                max_batch_size=max_batch_size,
+            ),
+            "clip": CLIP(
+                hf_token=hf_token,
                 device=device,
                 verbose=verbose,
                 max_batch_size=max_batch_size,
@@ -144,80 +136,78 @@ def compile_trt(
             )
         }
     
-
-
     # Register TensorRT plugins
     trt.init_libnvinfer_plugins(TRT_LOGGER, "")
 
-    for model, obj in models.items():
-        engine = Engine(model, model_engine_dir)
+    for model, trtmodel in models.items():
         onnx_path = onnx_dir / f"{model}.onnx"
         onnx_opt_path = onnx_dir / f"{model}.opt.onnx"
-        engine_path = model_engine_dir / f"{model}.plan"
-        if not onnx_opt_path.exists():
-            # Export onnx
-            if not onnx_path.exists():
-                print(f"Exporting model: {onnx_path}")
-                model = obj.get_model()
-                with torch.inference_mode(), torch.autocast("cuda"):
-                    inputs = obj.get_sample_input(
-                        1, img_height, img_width
-                    )
-                    print("Starting export of ONNX model")
-                    torch.onnx.export(
-                        model,
-                        inputs,
-                        onnx_path,
-                        export_params=True,
-                        opset_version=args.onnx_opset,
-                        do_constant_folding=True,
-                        input_names=obj.get_input_names(),
-                        output_names=obj.get_output_names(),
-                        dynamic_axes=obj.get_dynamic_axes(),
-                    )
-                    print("Finished export of ONNX model")
-                del model
-                gc.collect()
-            else:
-                print(f"Found cached model: {onnx_path}")
-            # Optimize onnx
-            if not os.path.exists(onnx_opt_path):
-                print(f"Generating optimizing model: {onnx_opt_path}")
-                try:
-                    onnx_opt_graph = obj.optimize(
-                        onnx.load(onnx_path),
-                        minimal_optimization=args.onnx_minimal_optimization,
-                    )
-                except:
-                    print("Failed to optimize model, falling back to minimal optimization")
-                    onnx_opt_graph = obj.optimize(
-                        onnx.load(onnx_path),
-                        minimal_optimization=True,
-                    )
+        export_onnx(onnx_path, trtmodel, img_width, img_height)
+        optimize_onnx(onnx_path, trtmodel, onnx_opt_path)
+    
+    torch.cuda.empty_cache()
 
-                onnx.save(onnx_opt_graph, onnx_opt_path)
-            else:
-                print(f"Found cached optimized model: {onnx_opt_path} ")
-        # Build engine
+    for model, trtmodel in models.items():  
+        profile = trtmodel.get_input_profile(
+                        1,
+                        img_height,
+                        img_width,
+                        static_batch=True,
+                        static_shape=not args.build_dynamic_shape)
+        compile_engine(model, profile, model_engine_dir, onnx_dir)
 
-        if not engine_path.exists():
-            print("Building the TRT engine...")
-            engine.build(
-                str(onnx_opt_path),
-                fp16=True,
-                input_profile=obj.get_input_profile(
-                    1,
-                    img_height,
-                    img_width,
-                    static_batch=True,
-                    static_shape=not args.build_dynamic_shape,
-                ),
-                enable_preview=not args.disable_preview_features,
+
+def export_onnx(onnx_path,trtmodel,img_width,img_height):
+    if not onnx_path.exists():
+        print(f"Exporting model: {onnx_path}")
+        model = trtmodel.get_model()
+        with torch.inference_mode(), torch.autocast("cuda"):
+            inputs = trtmodel.get_sample_input(
+                1, img_height, img_width
             )
+            print("Starting export of ONNX model")
+            torch.onnx.export(
+                model,
+                inputs,
+                onnx_path,
+                export_params=True,
+                opset_version=args.onnx_opset,
+                do_constant_folding=True,
+                input_names=trtmodel.get_input_names(),
+                output_names=trtmodel.get_output_names(),
+                dynamic_axes=trtmodel.get_dynamic_axes(),
+            )
+            print("Finished export of ONNX model")
+        del model,inputs
+    else:
+        print(f"Found cached model: {onnx_path}")
 
-        
+def optimize_onnx(onnx_path, trtmodel, onnx_opt_path ):
+    if not os.path.exists(onnx_opt_path):
+        print(f"Generating optimizing model: {onnx_opt_path}")
+        onnx_opt_graph = trtmodel.optimize(
+            onnx.load(onnx_path),
+            minimal_optimization=args.onnx_minimal_optimization,
+        )
+        onnx.save(onnx_opt_graph, onnx_opt_path)
+        del onnx_opt_graph
+    else:
+        print(f"Found cached optimized model: {onnx_opt_path}")
 
+def compile_engine(model, profile, model_engine_dir, onnx_dir):
+    engine = Engine(model, model_engine_dir)
+    engine_path = model_engine_dir / f"{model}.plan"
+    onnx_opt_path = onnx_dir / f"{model}.opt.onnx"
 
+    if not engine_path.exists():
+        print("Building the TRT engine...")
+        engine.build(
+            str(onnx_opt_path),
+            fp16=True,
+            input_profile=profile,
+            enable_preview=args.enable_preview_features,
+        )
+    del engine
 
 if __name__ == "__main__":
     print("Building engine...")
