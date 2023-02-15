@@ -10,7 +10,7 @@
     // video from the camera. Obviously, we start at false.
   
     let streaming = false;
-    let host = 'http://192.168.0.155:5004';
+    let host = window.location.hostname;
   
     // The various HTML elements we need to configure or control. These
     // will be set by the startup() function.
@@ -21,7 +21,7 @@
     let startbutton = null;
     let generating = false;
     const promptelement = document.getElementById("prompt");
-
+    const strength = document.getElementById("strength");
     // add listener to promptelement on input
 
 
@@ -50,12 +50,16 @@
             var offer = pc.localDescription;
             offer.sdp = sdpFilterCodec('video', "H264/90000", offer.sdp)
             console.log(offer.sdp)
+            options = {
+              "prompt": promptelement.value,
+              "strength": parseFloat(strength.value)
+            }
            
-            return fetch('http://192.168.0.155:8080/offer', {
+            return fetch(`http://${host}:8080/offer`, {
                 body: JSON.stringify({
                     sdp: offer.sdp,
                     type: offer.type,
-                    options: {sad: true}
+                    options: options
                 }),
                 headers: {
                     'Content-Type': 'application/json'
@@ -78,15 +82,15 @@
 
         //config.iceServers = [{urls: ['stun:stun.l.google.com:19302']}];
         
-        //@config.iceServers = [{urls: ['stun:stun.l.google.com:19302']}];
         pc = new RTCPeerConnection(config);
 
         promptdc = pc.createDataChannel('prompt', {"ordered": true});
         promptelement.oninput = function() {
-          promptdc.send(promptelement.value)
+          promptdc.send(JSON.stringify({prompt: promptelement.value}))
         };
-
-
+        strength.oninput = function() {
+          promptdc.send(JSON.stringify({strength: strength.value}))
+        }
 
         recorddc = pc.createDataChannel('record', {"ordered": true});
         recorddc.onmessage = function(evt) {
@@ -109,13 +113,11 @@
         });
         negotiate();
 
-        // document.getElementById('stop').style.display = 'inline-block';
     }
 
     function stop() {
         document.getElementById('stop').style.display = 'none';
 
-        // close peer connection
         setTimeout(function() {
             pc.close();
         }, 500);
@@ -130,21 +132,6 @@
       photo = document.getElementById("genvideo");
       const startbutton = document.getElementById("startbutton");
       const recordButton = document.getElementById('record');
-      const options = {mimeType: 'audio/webm'};
-      const recordedChunks = [];
-      let audioblob
-
-      // fetch(`${host}/api/models/loaded`)
-      // .then(r => r.json())
-      // .then(data => {
-      //   console.log(data)
-      //   if (data["0"] !=  "runwayml/stable-diffusion-v1-5") {
-      //     fetch(`${host}/api/models/load?model=runwayml%2Fstable-diffusion-v1-5&backend=TensorRT`,{
-      //       method: 'POST', // or 'PUT'
-      //     })
-      //   }
-      // })
-
 
       navigator.mediaDevices
         .getUserMedia({ video: {facingMode: 'environment'}, audio: true })
@@ -168,30 +155,6 @@
           recordButton.addEventListener('touchend', function() {
             recorddc.send("stop")
           });
-
-
-          // document.body.onkeyup = function(e) {
-          //   if (e.key == " " ||
-          //       e.code == "Space"    
-          //   ) {
-          //     e.preventDefault();
-          //     console.log("keyup space")
-          //     mediaRecorder.stop();
-          //     recordedChunks.splice(0, recordedChunks.length);
-          //   }
-          // }
-
-          // document.body.onkeydown = function(e) {
-          //   if (e.key == " " ||
-          //       e.code == "Space"    
-          //   ) {
-          //     e.preventDefault();
-          //     console.log("keydown space")
-          //     if (mediaRecorder.state == 'inactive') mediaRecorder.start();
-          //   }
-          // }
-
-          
       
         })
         .catch((err) => {
@@ -218,8 +181,13 @@
       false
     );
 
- }
+    addEventListener('fullscreenchange', (event) => { 
+        if (!document.fullscreenElement) {
+            startbutton.style.display = "block";
+        }
+    });
 
+ }
 
 
   function sdpFilterCodec(kind, codec, realSdp) {

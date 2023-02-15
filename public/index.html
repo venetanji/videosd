@@ -22,12 +22,12 @@
                 <div class="camera">
                     <video id="video" muted>Video stream not available.</video>
                 </div>
-                <input type="range" class="form-range" id="strength">
+                <input type="range" class="form-range" min="0.05" max="1" step ="0.025" value="0.4" id="strength">
                 <div class="mb-3">
-                    <textarea class="form-control" rows="5" id="prompt" placeholder="Enter your prompt here" value="" />Under water</textarea>
+                    <textarea class="form-control" rows="3" id="prompt" placeholder="Enter your prompt here" value="" />Under water</textarea>
                 </div>
                 <button id="record" class="btn btn-primary mb-3 btn-block">Hold and speak</button>
-                <button id="startbutton" class="btn btn-primary mb-3">Start generating</button>
+                <button id="startbutton" class="btn btn-primary mb-3">Fullscreen</button>
             </div>
         </div>
         <div class='row'>

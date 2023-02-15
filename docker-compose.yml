@@ -1,6 +1,16 @@
 services:
-  builder:
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest-gpu
+    environment:
+      - ASR_MODEL=small
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: ["gpu"]
 
+  videosd:
     image:  videosd:latest
     init: true
     environment:
@@ -11,7 +21,7 @@ services:
       - ./diffusert:/workspace/diffusert/
       - engines:/engines
       - onnx:/onnx
-      - /c/users/giova/.cache/huggingface:/root/.cache/huggingface
+      - ~/.cache/huggingface:/root/.cache/huggingface
     working_dir: /workspace/diffusert
     ports:
       - 8080:8080

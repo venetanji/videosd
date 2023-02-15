@@ -48,6 +48,8 @@ class STTTrack(MediaStreamTrack):
     def transcribe(self):
 
         samples = self.recorder.read_many(1024)
+        if len(samples) == 0:
+            return
         sample_rate = samples[0].sample_rate
         samples = np.array([x.to_ndarray() for x in samples])
         samples = samples.flatten()
@@ -60,7 +62,7 @@ class STTTrack(MediaStreamTrack):
     async def fetch(self):
         print("fetch")
         async with ClientSession() as session:
-            url = 'http://192.168.0.155:9000/asr?task=transcribe&language=en&output=json'
+            url = 'http://whisper:9000/asr?task=transcribe&language=en&output=json'
             async with session.post(url, data={'audio_file':self.audiofile}) as response:
                 response = await response.json()
                 self.text = response['text']
@@ -91,16 +93,15 @@ class VideoSDTrack(MediaStreamTrack):
         self.generating = False
         self.current_frame = None
         self.gen_task = None
-        self.prompt = "A photo of a cat"
     
     def diffuse(self,frame):
-        
+        print(self.options)
         imgs = trt_model.infer(
-            prompt=[self.prompt],
+            prompt=[self.options['prompt']],
             num_of_infer_steps = 20,
             guidance_scale = 7,
             init_image= frame.to_image(),
-            strength = 0.4,
+            strength = self.options['strength'],
             seed=43)
         self.generating = False
         self.current_frame = VideoFrame.from_image(imgs[0])
@@ -139,7 +140,12 @@ async def offer(request):
         if channel.label == "prompt":
             @channel.on("message")
             def on_message(message):
-                tracks['video'].prompt = message
+                message = json.loads(message)
+                if 'strength' in message:
+                    message['strength'] = float(message['strength'])
+                for key, value in message.items():
+                    tracks['video'].options[key] = value
+
                 print(message)
         elif channel.label == "record":
             @channel.on("message")
