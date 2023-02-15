@@ -38,7 +38,6 @@ def parseArgs():
         choices=["fp32", "fp16"],
         help="Denoiser model precision",
     )
-
     # ONNX export
     parser.add_argument(
         "--onnx-opset",
@@ -55,7 +54,6 @@ def parseArgs():
         action="store_true",
         help="Restrict ONNX optimization to const folding and shape inference",
     )
-
     # TensorRT engine build
     parser.add_argument(
         "--model-path",
@@ -65,7 +63,6 @@ def parseArgs():
     parser.add_argument(
         "--engine-dir", default="/engines", help="Output directory for TensorRT engines"
     )
-
     parser.add_argument(
         "--build-dynamic-shape",
         action="store_true",
@@ -76,7 +73,6 @@ def parseArgs():
         action="store_true",
         help="Disable TensorRT preview features",
     )
-
     # TensorRT inference
     parser.add_argument(
         "--hf-token",
@@ -88,13 +84,8 @@ def parseArgs():
     )
 
     return parser.parse_args()
-
  
-def compile_trt(
-    model,
-    img_height,
-    img_width
-):
+def compile_trt(model,img_height,img_width):
 
     args = parseArgs()
     print("[I] Building TensorRT engine with args:", args)
@@ -183,7 +174,7 @@ def export_onnx(onnx_path,trtmodel,img_width,img_height):
     else:
         print(f"Found cached model: {onnx_path}")
 
-def optimize_onnx(onnx_path, trtmodel, onnx_opt_path ):
+def optimize_onnx(onnx_path, trtmodel, onnx_opt_path):
     if not os.path.exists(onnx_opt_path):
         print(f"Generating optimizing model: {onnx_opt_path}")
         onnx_opt_graph = trtmodel.optimize(
