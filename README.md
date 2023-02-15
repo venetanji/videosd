@@ -5,7 +5,7 @@ TensorRT accelerated diffusion pipeline, combined with webrtc frontend for camer
 # Compile the engine
 
 ```
-docker compose build
+docker compose build backend
 docker compose run --rm compile
 ```
 
