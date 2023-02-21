@@ -22,14 +22,13 @@ If you want to recompile, just rename or recreate the volumes or spin up the dev
 docker compose --profile production up -d
 ```
 
-App should be running on port 80, change in compose if you need
+App should be running on port 80. You can run the frontend locally at localhost:80 or run `ngrok http 80` and open the link from a mobile phone in the same network.
 
 # Run the server in dev mode
 
 ```
 docker compose --profile dev up -d
-npm install
-node index.js
+docker exec -it videosd-backend-dev-1 bash
 ```
 
-Serve the app with express on port 3000. You can then attach vscode to the dev container. To start the server run `python server.py` within the container.
+You can now attach vscode to the dev container by browsing remotes or using the docker vscode extension. To start the server run `python server.py` within the container.
