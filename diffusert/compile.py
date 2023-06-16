@@ -82,6 +82,10 @@ def parseArgs():
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show verbose output"
     )
+    
+    parser.add_argument(
+        "-d", "--device", default="cuda:0", help="Specify device to compile for"
+    )
 
     return parser.parse_args()
  
@@ -100,7 +104,7 @@ def compile_trt(model,img_height,img_width):
     model_engine_dir = engines_dir / model
     model_engine_dir.mkdir(parents=True, exist_ok=True)
 
-    device = "cuda"
+    device = args.device
     verbose = args.verbose
     hf_token = args.hf_token
     max_batch_size = 1
@@ -131,8 +135,10 @@ def compile_trt(model,img_height,img_width):
     trt.init_libnvinfer_plugins(TRT_LOGGER, "")
 
     for model, trtmodel in models.items():
-        onnx_path = onnx_dir / f"{model}.onnx"
-        onnx_opt_path = onnx_dir / f"{model}.opt.onnx"
+        onnx_path = onnx_dir / f"device-{device}" / f"{model}.onnx"
+        onnx_opt_path = onnx_dir / f"device-{device}" / f"{model}.opt.onnx"
+        onnx_path.parent.mkdir(parents=True, exist_ok=True)
+        
         export_onnx(onnx_path, trtmodel, img_width, img_height)
         optimize_onnx(onnx_path, trtmodel, onnx_opt_path)
     
@@ -146,7 +152,7 @@ def compile_trt(model,img_height,img_width):
                         img_width,
                         static_batch=True,
                         static_shape=not args.build_dynamic_shape)
-        compile_engine(model, profile, model_engine_dir, onnx_dir)
+        compile_engine(model, profile, model_engine_dir, onnx_dir / f"device-{device}")
 
 
 def export_onnx(onnx_path,trtmodel,img_width,img_height):

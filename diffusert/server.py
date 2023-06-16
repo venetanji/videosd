@@ -6,12 +6,14 @@ import io
 import os
 import ssl
 import uuid
+import yaml
 from scipy import io as sio
 import numpy as np
+from cuda import cuda, nvrtc, cudart
 #import whisper
-
-
-
+config = yaml.safe_load(open("config.yaml"))
+gpu_num = len(config['gpus'])
+from PIL import Image
 from videopipeline import VideoSDPipeline 
 from aiohttp import web, ClientSession
 import aiohttp_cors
@@ -63,9 +65,9 @@ class STTTrack(MediaStreamTrack):
         async with ClientSession() as session:
             url = 'http://whisper:9000/asr?task=transcribe&language=en&output=json'
             async with session.post(url, data={'audio_file':self.audiofile}) as response:
-                response = await response.json()
-                self.text = response['text']
                 print(response)
+                response = await response.json(content_type='text/plain')
+                self.text = response['text']
                 return response['text']
 
     async def recv(self):
@@ -89,29 +91,35 @@ class VideoSDTrack(MediaStreamTrack):
         super().__init__()  # don't forget this!
         self.track = track
         self.options = options
-        self.generating = False
+        self.generating = [False for i in range(gpu_num)]
+        #initialize the frame as black empty
+        self.img = Image.new('RGB', (1920, 1080), (0, 0, 0))
         self.current_frame = None
         self.gen_task = None
     
-    def diffuse(self,frame):
+    def diffuse(self,frame,gpu=0):
         print(self.options)
-        imgs = trt_model.infer(
+        cudart.cudaSetDevice(gpu)
+        imgs = trt_models[gpu].infer(
             prompt=[self.options['prompt']],
             num_of_infer_steps = 20,
             guidance_scale = 7,
             init_image= frame.to_image(),
             strength = self.options['strength'],
             seed=43)
-        self.generating = False
-        self.current_frame = VideoFrame.from_image(imgs[0])
+        self.generating[gpu] = False
+        self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
+        self.current_frame = VideoFrame.from_image(self.img)
+
 
     async def recv(self):
         frame = await self.track.recv()
-        if not self.generating:
-            self.generating = True
-            if not self.current_frame:
-                self.current_frame = frame
-            asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame)
+        for gpu in range(gpu_num):
+            if not self.generating[gpu]:
+                self.generating[gpu] = True
+                if not self.current_frame:
+                    self.current_frame = frame
+                asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame,gpu)
         self.current_frame.pts = frame.pts
         self.current_frame.time_base = frame.time_base
         return self.current_frame
@@ -246,10 +254,18 @@ if __name__ == "__main__":
     })
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
-
-    trt_model = VideoSDPipeline()
-    trt_model.loadEngines()
-    trt_model.loadModules()
+    trt_models = [None for i in range(gpu_num)]
+    
+    # load trt model into every gpus
+    # TODO make this async and return when all models are loaded
+    
+    for i in range(gpu_num):
+        print(i)
+        cudart.cudaSetDevice(i)
+        print(cudart.cudaGetDevice())
+        trt_models[i] = VideoSDPipeline(device=i)
+        trt_models[i].loadEngines(engine_dir=config['gpus'][i]['model'])
+        trt_models[i].loadModules(engine_dir=config['gpus'][i]['model'])
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context

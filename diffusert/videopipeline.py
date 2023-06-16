@@ -144,17 +144,15 @@ class VideoSDPipeline:
         self.stream.free()
         del self.stream
 
-    def getModelPath(self, name, onnx_dir, opt=True):
-        return os.path.join(onnx_dir, name + (".opt" if opt else "") + ".onnx")
-
     def loadEngines(
         self,
-        engine_dir="/engines/runwayml/stable-diffusion-v1-5",
+        engine_dir="runwayml/stable-diffusion-v1-5",
     ):
         
-        # Build engines
         for model_name, obj in self.models.items():
-            engine = Engine(model_name, engine_dir)
+            print(f"Loading {model_name} engine on device {self.device}...")
+
+            engine = Engine(model_name, Path("/engines") / engine_dir)
             self.engine[model_name] = engine
 
         # Separate iteration to activate engines
@@ -172,9 +170,10 @@ class VideoSDPipeline:
 
     def loadModules(
         self,
+        engine_dir="runwayml/stable-diffusion-v1-5"
     ):
         self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-        self.vae = AutoencoderKL.from_pretrained("runwayml/stable-diffusion-v1-5",subfolder="vae").to("cuda")
+        self.vae = AutoencoderKL.from_pretrained(engine_dir,subfolder="vae").to(self.device)
 
     def runEngine(self, model_name, feed_dict):
         engine = self.engine[model_name]
