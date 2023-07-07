@@ -22,6 +22,8 @@
     let generating = false;
     const promptelement = document.getElementById("prompt");
     const strength = document.getElementById("strength");
+    const guidance_scale = document.getElementById("guidance_scale");
+
     // add listener to promptelement on input
 
 
@@ -52,7 +54,8 @@
             console.log(offer.sdp)
             options = {
               "prompt": promptelement.value,
-              "strength": parseFloat(strength.value)
+              "strength": parseFloat(strength.value),
+              "guidance_scale": parseFloat(guidance_scale.value)
             }
            
             return fetch('/offer', {
@@ -91,6 +94,9 @@
         strength.oninput = function() {
           promptdc.send(JSON.stringify({strength: strength.value}))
         }
+        guidance_scale.oninput = function() {
+            promptdc.send(JSON.stringify({guidance_scale: guidance_scale.value}))
+          }
 
         recorddc = pc.createDataChannel('record', {"ordered": true});
         recorddc.onmessage = function(evt) {

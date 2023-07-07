@@ -16,7 +16,6 @@ x-gpu: &x-gpu
       reservations:
         devices:
           - driver: nvidia
-            device_ids: ["1"]
             capabilities: ["gpu"]
 
 services:
@@ -49,8 +48,7 @@ services:
       - dev
 
   backend: &backend
-    <<: *x-base
-    <<: *x-gpu
+    <<: [*x-base,*x-gpu]
     build: .
     entrypoint: "python server.py"
     ports:
@@ -71,6 +69,34 @@ services:
     entrypoint: "python compile.py"
     profiles:
       - compile
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE #optional
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - SERVERURL=204.15.42.207 #optional
+      - SERVERPORT=51820 #optional
+      - PEERS=2 #optional
+      - PEERDNS=8.8.8.8 #optional
+      - INTERNAL_SUBNET=10.13.13.0 #optional
+      - ALLOWEDIPS=0.0.0.0/0 #optional
+      - PERSISTENTKEEPALIVE_PEERS= #optional
+      - LOG_CONFS=true #optional
+    volumes:
+
+      - ./wg/config:/config
+      - /lib/modules:/lib/modules #optional
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
 
 volumes:
   engines:

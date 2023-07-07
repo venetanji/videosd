@@ -3,3 +3,4 @@ diffusert/engine
 diffusert/onnx
 diffusert/__pycache__
 diffusert/output
+/wg

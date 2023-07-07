@@ -7,9 +7,16 @@ import os
 import ssl
 import uuid
 import yaml
+import torch
+import random
 from scipy import io as sio
 import numpy as np
 from cuda import cuda, nvrtc, cudart
+import tensorrt as trt
+from utilities import TRT_LOGGER
+
+
+import time
 #import whisper
 config = yaml.safe_load(open("config.yaml"))
 gpu_num = len(config['gpus'])
@@ -92,34 +99,45 @@ class VideoSDTrack(MediaStreamTrack):
         self.track = track
         self.options = options
         self.generating = [False for i in range(gpu_num)]
+        self.last_gen_start = [time.time() for i in range(gpu_num)]
+        self.last_gen_frame = time.time()
+        self.avg_gen_time = 0.4
         #initialize the frame as black empty
-        self.img = Image.new('RGB', (1920, 1080), (0, 0, 0))
+        self.img = Image.new('RGB', (512, 512), (0, 0, 0))
         self.current_frame = None
         self.gen_task = None
     
     def diffuse(self,frame,gpu=0):
         print(self.options)
         cudart.cudaSetDevice(gpu)
-        imgs = trt_models[gpu].infer(
-            prompt=[self.options['prompt']],
+        imgs = trt_models[gpu].infer(frame.to_image(),[self.options['prompt']],
+            #prompt=,
             num_of_infer_steps = 20,
-            guidance_scale = 7,
-            init_image= frame.to_image(),
+            guidance_scale = self.options['guidance_scale'],
+            #img= ,
             strength = self.options['strength'],
-            seed=43)
+            )
         self.generating[gpu] = False
-        self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
-        self.current_frame = VideoFrame.from_image(self.img)
+        self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
+        print("Average gen time:", self.avg_gen_time)
+        #self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
+        self.current_frame = VideoFrame.from_image(imgs[0])
 
 
     async def recv(self):
         frame = await self.track.recv()
         for gpu in range(gpu_num):
             if not self.generating[gpu]:
-                self.generating[gpu] = True
                 if not self.current_frame:
                     self.current_frame = frame
+                if time.time() - np.max(self.last_gen_start) < self.avg_gen_time/gpu_num: break
+                self.generating[gpu] = True
+                self.last_gen_start[gpu] = time.time()
+                if not self.current_frame:
+                    self.current_frame = frame
+                print("Generating on GPU ", gpu)
                 asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame,gpu)
+                break
         self.current_frame.pts = frame.pts
         self.current_frame.time_base = frame.time_base
         return self.current_frame
@@ -150,6 +168,8 @@ async def offer(request):
                 message = json.loads(message)
                 if 'strength' in message:
                     message['strength'] = float(message['strength'])
+                if 'guidance_scale' in message:
+                    message['guidance_scale'] = float(message['guidance_scale'])
                 for key, value in message.items():
                     tracks['video'].options[key] = value
 
@@ -255,17 +275,17 @@ if __name__ == "__main__":
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
     trt_models = [None for i in range(gpu_num)]
+
+    trt.init_libnvinfer_plugins(TRT_LOGGER, '')
     
     # load trt model into every gpus
     # TODO make this async and return when all models are loaded
     
     for i in range(gpu_num):
-        print(i)
         cudart.cudaSetDevice(i)
-        print(cudart.cudaGetDevice())
-        trt_models[i] = VideoSDPipeline(device=i)
+        trt_models[i] = VideoSDPipeline(device=i, scheduler="EulerA")
         trt_models[i].loadEngines(engine_dir=config['gpus'][i]['model'])
-        trt_models[i].loadModules(engine_dir=config['gpus'][i]['model'])
+        trt_models[i].loadResources(360,640,1,None)
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
