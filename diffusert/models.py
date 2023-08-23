@@ -321,12 +321,12 @@ class UNet(BaseModel):
         #     subfolder="unet",
         #     use_auth_token=self.hf_token,
         #     **model_opts).to(self.device)
-        unet_tmp = UNet2DConditionModel.from_pretrained("runwayml/stable-diffusion-v1-5",
+        unet_tmp = UNet2DConditionModel.from_pretrained(self.path,
                                                         subfolder="unet", torch_dtype=torch.float16).to('cuda')
         controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16).to(
             'cuda')
         pipe = StableDiffusionControlNetPipeline.from_pretrained(
-            "runwayml/stable-diffusion-v1-5", unet=unet_tmp, controlnet=controlnet, torch_dtype=torch.float16).to(
+            self.path, unet=unet_tmp, controlnet=controlnet, torch_dtype=torch.float16).to(
             'cuda')
         new_unet = UNet2DConditionModel_Cnet(unet=pipe.unet, controlnet=pipe.controlnet).to('cuda')
         return new_unet
@@ -395,7 +395,7 @@ class VAE(BaseModel):
         self.name = "VAE decoder"
 
     def get_model(self):
-        vae = AutoencoderKL.from_pretrained(self.path,
+        vae = AutoencoderKL.from_pretrained("runwayml/stable-diffusion-v1-5",
             subfolder="vae",
             use_auth_token=self.hf_token).to(self.device)
         vae.forward = vae.decode
@@ -437,11 +437,14 @@ def make_VAE(version, hf_token, device, verbose, max_batch_size, inpaint=False):
             max_batch_size=max_batch_size, embedding_dim=get_embedding_dim(version))
 
 class TorchVAEEncoder(torch.nn.Module):
-    def __init__(self, token, device, path):
+    def __init__(self, token, device, path, generator=None):
         super().__init__()
         self.path = path
-        self.vae_encoder = AutoencoderKL.from_pretrained(self.path, subfolder="vae", use_auth_token=token).to(device)
-
+        self.generator = generator
+        self.vae_encoder = AutoencoderKL.from_pretrained("runwayml/stable-diffusion-v1-5", subfolder="vae", use_auth_token=token).to(device)
+    def encode_image(self, image):
+        print("Generator", self.generator)
+        return self.vae_encoder.encode(image).latent_dist.sample(generator=self.generator)
     def forward(self, x):
         return self.vae_encoder.encode(x).latent_dist.sample()
 
@@ -452,14 +455,17 @@ class VAEEncoder(BaseModel):
         verbose,
         path,
         max_batch_size,
-        embedding_dim
+        embedding_dim,
+        generator=None
     ):
         super(VAEEncoder, self).__init__(hf_token, device=device, verbose=verbose, path=path, max_batch_size=max_batch_size, embedding_dim=embedding_dim)
+        self.generator = generator
         self.name = "VAE encoder"
+        self.vae_encoder = TorchVAEEncoder(self.hf_token, self.device, self.path, self.generator)
+
 
     def get_model(self):
-        vae_encoder = TorchVAEEncoder(self.hf_token, self.device, self.path)
-        return vae_encoder
+        return self.vae_encoder
 
     def get_input_names(self):
         return ['images']
@@ -496,9 +502,9 @@ class VAEEncoder(BaseModel):
         self.check_dims(batch_size, image_height, image_width)
         return torch.randn(batch_size, 3, image_height, image_width, dtype=torch.float32, device=self.device)
 
-def make_VAEEncoder(version, hf_token, device, verbose, max_batch_size, inpaint=False):
+def make_VAEEncoder(version, hf_token, device, verbose, max_batch_size, inpaint=False, generator=None):
     return VAEEncoder(hf_token=hf_token, device=device, verbose=verbose, path=get_path(version, inpaint=inpaint),
-            max_batch_size=max_batch_size, embedding_dim=get_embedding_dim(version))
+            max_batch_size=max_batch_size, embedding_dim=get_embedding_dim(version), generator=generator)
 
 def make_tokenizer(version, hf_token):
     return CLIPTokenizer.from_pretrained(get_path(version),

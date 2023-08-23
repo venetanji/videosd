@@ -73,6 +73,10 @@ services:
   wireguard:
     image: lscr.io/linuxserver/wireguard:latest
     container_name: wireguard
+    profiles:
+      - dev
+      - production
+
     cap_add:
       - NET_ADMIN
       - SYS_MODULE #optional
@@ -80,7 +84,6 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      - SERVERURL=204.15.42.207 #optional
       - SERVERPORT=51820 #optional
       - PEERS=2 #optional
       - PEERDNS=8.8.8.8 #optional

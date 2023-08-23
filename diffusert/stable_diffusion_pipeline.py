@@ -23,6 +23,7 @@ import nvtx
 import os
 import onnx
 from polygraphy import cuda
+from PIL import Image
 import torch
 from utilities import Engine, device_view, save_image, preprocess_image
 from utilities import DPMScheduler, DDIMScheduler, EulerAncestralDiscreteScheduler, LMSDiscreteScheduler, PNDMScheduler
@@ -131,13 +132,8 @@ class StableDiffusionPipeline:
         self.models = {} # loaded in loadEngines()
         self.engine = {} # loaded in loadEngines()
 
-    def loadResources(self, image_height, image_width, batch_size, seed):
+    def loadResources(self, image_height, image_width, batch_size, seed=42):
         # Initialize noise generator
-        if seed:
-            self.generator = torch.Generator(device="cuda").manual_seed(seed)
-            torch.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-            np.random.seed(seed)
 
         # Pre-compute latent input scales and linear multistep coefficients
         print(self.denoising_steps)
@@ -194,6 +190,7 @@ class StableDiffusionPipeline:
         enable_all_tactics=False,
         timing_cache=None,
         onnx_refit_dir=None,
+        seed=42
     ):
         """
         Build and load engines for TensorRT accelerated inference.
@@ -233,6 +230,14 @@ class StableDiffusionPipeline:
             onnx_refit_dir (str):
                 Directory containing refit ONNX models.
         """
+
+        #self.generator = torch.cuda.manual_seed(42)
+        #torch.manual_seed(42)
+        # torch.manual_seed(42)
+        # torch.cuda.manual_seed_all(42)
+        # np.random.seed(42)
+
+
         # Load text tokenizer
         self.tokenizer = make_tokenizer(self.version, self.hf_token)
 
@@ -331,11 +336,12 @@ class StableDiffusionPipeline:
 
     def initialize_timesteps(self, timesteps, strength):
         self.scheduler.set_timesteps(timesteps)
+        self.scheduler.configure()
         offset = self.scheduler.steps_offset if hasattr(self.scheduler, "steps_offset") else 0
         init_timestep = int(timesteps * strength) + offset
         init_timestep = min(init_timestep, timesteps)
         t_start = max(timesteps - init_timestep + offset, 0)
-        timesteps = self.scheduler.timesteps[t_start:].to(self.device)
+        timesteps = self.scheduler.timesteps[t_start:].to(self.device)            
         return timesteps, t_start
 
     def no_preprocess_images(self, batch_size, images=()):
@@ -355,8 +361,10 @@ class StableDiffusionPipeline:
         image: torch.Tensor
         """
         images = []
-        image = image.convert("RGB")
-        image = np.array(image)
+        #if is a pil image convert to np array
+        if isinstance(image, Image.Image):
+            #image = image.convert("RGB")
+            image = np.array(image)
         image = image[None,:]
         images.append(image)
         image = np.concatenate(images, axis=0)
@@ -415,7 +423,8 @@ class StableDiffusionPipeline:
         img = self.preprocess_image(img)
         # img = torch.cat([img] * 2, dim=0)  #？？？？这里的img是tensor张量，但是vino的是numpy
         img = torch.cat([img] * 2)
-        print(len(timesteps))
+        
+        total_steps = float(len(timesteps))
         for step_index, timestep in enumerate(timesteps):
             if self.nvtx_profile:
                 nvtx_latent_scale = nvtx.start_range(message='latent_scale', color='pink')
@@ -438,9 +447,16 @@ class StableDiffusionPipeline:
             sample_inp = device_view(latent_model_input)
             timestep_inp = device_view(timestep_float)
             embeddings_inp = device_view(text_embeddings)
+            # if float(step_index) / total_steps > 0.7:
+            #     noise_pred = self.runEngine('unet', {"sample": sample_inp, 
+            #                                          "timestep": timestep_inp, 
+            #                                          "encoder_hidden_states": embeddings_inp})['latent']
+            # else:
             device_img = device_view(img)
             noise_pred = self.runEngine('unet', {"sample": sample_inp, "timestep": timestep_inp, "encoder_hidden_states": embeddings_inp,
-                                                 "controlnet_cond":device_img})['latent']
+                                        "controlnet_cond":device_img})['latent']
+
+      
             if self.nvtx_profile:
                 nvtx.end_range(nvtx_unet)
 
@@ -450,6 +466,7 @@ class StableDiffusionPipeline:
             # Perform guidance
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
             noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+            #print("Generator", self.generator)
             latents = self.scheduler.step(noise_pred, latents, step_offset + step_index, timestep)
 
             if self.nvtx_profile:
@@ -460,6 +477,7 @@ class StableDiffusionPipeline:
         return latents
 
     def encode_image(self, init_image):
+        #init_latents = self.models['vae_encoder'].vae_encoder.vae_encoder.encode(init_image).latent_dist.sample(generator=self.generator)
         if self.nvtx_profile:
             nvtx_vae = nvtx.start_range(message='vae_encoder', color='red')
         cudart.cudaEventRecord(self.events['vae_encoder-start'], 0)

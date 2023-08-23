@@ -614,6 +614,7 @@ class EulerAncestralDiscreteScheduler():
         prev_sample = sample + derivative * dt
 
         device = model_output.device
+        
         noise = torch.randn(model_output.shape, dtype=model_output.dtype, device=device, generator=generator).to(
             device
         )
@@ -1184,7 +1185,7 @@ def add_arguments(parser):
     # TensorRT inference
     parser.add_argument('--num-warmup-runs', type=int, default=5, help="Number of warmup runs before benchmarking performance")
     parser.add_argument('--nvtx-profile', action='store_true', help="Enable NVTX markers for performance profiling")
-    parser.add_argument('--seed', type=int, default=None, help="Seed for random generator to get consistent results")
+    parser.add_argument('--seed', type=int, default=42, help="Seed for random generator to get consistent results")
 
     parser.add_argument('--output-dir', default='output', help="Output directory for logs and image artifacts")
     parser.add_argument('--hf-token', type=str, help="HuggingFace API access token for downloading model checkpoints")

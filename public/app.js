@@ -23,6 +23,7 @@
     const promptelement = document.getElementById("prompt");
     const strength = document.getElementById("strength");
     const guidance_scale = document.getElementById("guidance_scale");
+    const steps = document.getElementById("steps");
 
     // add listener to promptelement on input
 
@@ -55,7 +56,8 @@
             options = {
               "prompt": promptelement.value,
               "strength": parseFloat(strength.value),
-              "guidance_scale": parseFloat(guidance_scale.value)
+              "guidance_scale": parseFloat(guidance_scale.value),
+              "steps": parseInt(steps.value)
             }
            
             return fetch('/offer', {
@@ -97,6 +99,9 @@
         guidance_scale.oninput = function() {
             promptdc.send(JSON.stringify({guidance_scale: guidance_scale.value}))
           }
+        steps.oninput = function() {
+            promptdc.send(JSON.stringify({steps: steps.value}))
+        }
 
         recorddc = pc.createDataChannel('record', {"ordered": true});
         recorddc.onmessage = function(evt) {

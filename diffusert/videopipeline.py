@@ -23,7 +23,16 @@ import cv2
 import tensorrt as trt
 from utilities import TRT_LOGGER
 from stable_diffusion_pipeline import StableDiffusionPipeline
+# from sdrefpipeline import StableDiffusionControlNetReferencePipeline
+# from diffusers.models import ControlNetModel
+# from diffusers import UniPCMultistepScheduler
+
 from PIL import Image
+
+
+
+
+
 
 class VideoSDPipeline(StableDiffusionPipeline):
     """
@@ -34,6 +43,17 @@ class VideoSDPipeline(StableDiffusionPipeline):
         scheduler="DDIM",
         *args, **kwargs
     ):
+        # self.device = kwargs.get("device", "cuda")
+        # print(self.device)
+        # self.controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16)
+        # self.pipe = StableDiffusionControlNetReferencePipeline.from_pretrained(
+        #         "runwayml/stable-diffusion-v1-5",
+        #         controlnet=self.controlnet,
+        #         safety_checker=None,
+        #         torch_dtype=torch.float16
+        #         ).to(self.device)
+
+        # self.pipe.scheduler = UniPCMultistepScheduler.from_config(self.pipe.scheduler.config)
         """
         Initializes the Txt2Img Diffusion pipeline.
 
@@ -43,18 +63,38 @@ class VideoSDPipeline(StableDiffusionPipeline):
         """
         super(VideoSDPipeline, self).__init__(*args, **kwargs, \
             scheduler=scheduler, stages=['clip','unet','vae','vae_encoder'])
+    
+    def get_canny_filter(self, image, low_threshold=100, high_threshold=200):
+        image = cv2.Canny(image, low_threshold, high_threshold)
+        image = image[:, :, None]
+        image = np.concatenate([image, image, image], axis=2)
+        return image
+
+    def get_color_filter(self, cond_image, mask_size=64):
+        H, W = cond_image.shape[:2]
+        cond_image = cv2.resize(cond_image, (W // mask_size, H // mask_size), interpolation=cv2.INTER_CUBIC)
+        color = cv2.resize(cond_image, (W, H), interpolation=cv2.INTER_NEAREST)
+        return color
+
+    def get_colorcanny(self, image, mask_size):
+        canny_img = self.get_canny_filter(image)
+
+        color_img = self.get_color_filter(image, int(mask_size))
+
+        color_img[np.where(canny_img > 128)] = 255
+        return color_img
 
     def infer(
         self,
         img,
         prompt,
-        negative_prompt=["(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation"],
+        negative_prompt=["text, distorted face, blurry, bad quality, bad anatomy, low quality"],
         image_height=360,
         image_width=640,
         strength=0.4,
-        num_of_infer_steps=20,
+        num_of_infer_steps=20,  
         guidance_scale=7.5,
-        seed=None,
+        seed=42,
         warmup=False,
         verbose=False
     ):
@@ -85,35 +125,77 @@ class VideoSDPipeline(StableDiffusionPipeline):
 
         canny_image = np.array(img)
 
-        low_threshold = 100
-        high_threshold = 200
+        #low_threshold = 100
+        #high_threshold = 200
 
-        canny_image = cv2.Canny(canny_image, low_threshold, high_threshold)
-        image = canny_image[:, :, None]
-        image = np.concatenate([image, image, image], axis=2)
-        canny_image = Image.fromarray(image)
+        canny_image = self.get_canny_filter(canny_image)
+        # image = cv2.Canny(np.array(img), 100, 200)
+        # image = image[:, :, None]
+        # image = np.concatenate([image, image, image], axis=2)
+        Image.fromarray(canny_image).save("canny.png")
 
-        with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER):            
+        images = self.infertrt(img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image)
+        del canny_image
+        return images
+
+    # def inferpt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image):
+    #     return self.pipe(ref_image=img,
+    #                     prompt=prompt,
+    #                     negative_prompt=negative_prompt,
+    #                     image=canny_image,
+    #                     num_inference_steps=num_of_infer_steps,
+    #                     reference_attn=False,
+    #                     reference_adain=True).images
+
+
+    def infertrt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image):
+
+        with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER):
+            # set seed to 42 and deterministic mode
+            #torch.cuda.synchronize(self.device)
+
+            
+            # torch.backends.cudnn.deterministic = True
+            # torch.backends.cudnn.benchmark = False
+            #torch.use_deterministic_algorithms(True)
+            #torch.cuda.manual_seed_all(423123)
+            #np.random.seed(423123)
+            #torch.set_deterministic(True)
+            # initialize timesteps
             timesteps, t_start = self.initialize_timesteps(num_of_infer_steps,strength)
             # Pre-initialize latents
             encimg = self.preprocess_image(img, init=True)
             init_latent = self.encode_image(encimg)
-            latents = init_latent
+            # initialize previous_latents the first time
+            # if not hasattr(self, 'previous_latents'):
+                
+            #     self.previous_latents = init_latent
+            
+            # same = torch.eq(init_latent,self.previous_latents)
+            # print("same", same)
 
-            torch.cuda.synchronize()
+            # latents = init_latent
+            # self.previous_latents = latents
+
+            
             e2e_tic = time.perf_counter()
 
             # CLIP text encoder
             text_embeddings = self.encode_prompt(prompt, negative_prompt)
-
+            #torch.cuda.synchronize(self.device)
             # UNet denoiser
-            latents = self.denoise_latent(canny_image, latents, text_embeddings, timesteps)
+            latents = self.denoise_latent(canny_image, init_latent, text_embeddings, timesteps=timesteps, step_offset=1)
+            del init_latent
 
             # VAE decode latent
             images = self.decode_latent(latents)
+            del latents
+            del timesteps
 
             torch.cuda.synchronize()
             e2e_toc = time.perf_counter()
+            #torch.cuda.synchronize(self.device)
+
             
             images = ((images + 1) * 255 / 2).clamp(0, 255).detach().permute(0, 2, 3, 1).round().type(torch.uint8).cpu().numpy()
             out = []
