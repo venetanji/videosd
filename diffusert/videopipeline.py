@@ -129,63 +129,48 @@ class VideoSDPipeline(StableDiffusionPipeline):
         #high_threshold = 200
 
         canny_image = self.get_canny_filter(canny_image)
-        # image = cv2.Canny(np.array(img), 100, 200)
-        # image = image[:, :, None]
-        # image = np.concatenate([image, image, image], axis=2)
-        Image.fromarray(canny_image).save("canny.png")
 
         images = self.infertrt(img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image)
         del canny_image
         return images
 
-    # def inferpt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image):
-    #     return self.pipe(ref_image=img,
-    #                     prompt=prompt,
-    #                     negative_prompt=negative_prompt,
-    #                     image=canny_image,
-    #                     num_inference_steps=num_of_infer_steps,
-    #                     reference_attn=False,
-    #                     reference_adain=True).images
-
 
     def infertrt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image):
 
         with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER):
-            # set seed to 42 and deterministic mode
-            #torch.cuda.synchronize(self.device)
 
-            
-            # torch.backends.cudnn.deterministic = True
-            # torch.backends.cudnn.benchmark = False
-            #torch.use_deterministic_algorithms(True)
-            #torch.cuda.manual_seed_all(423123)
-            #np.random.seed(423123)
-            #torch.set_deterministic(True)
+            self.generator.set_state(self.generator_init_state)
+
             # initialize timesteps
             timesteps, t_start = self.initialize_timesteps(num_of_infer_steps,strength)
             # Pre-initialize latents
             encimg = self.preprocess_image(img, init=True)
             init_latent = self.encode_image(encimg)
-            # initialize previous_latents the first time
-            # if not hasattr(self, 'previous_latents'):
+            #initialize previous_latents the first time
+            if not hasattr(self, 'previous_latents'):
                 
-            #     self.previous_latents = init_latent
-            
-            # same = torch.eq(init_latent,self.previous_latents)
-            # print("same", same)
+                self.previous_latents = init_latent
 
-            # latents = init_latent
-            # self.previous_latents = latents
+            latents = init_latent * 0.05 + self.previous_latents * 0.95
 
             
             e2e_tic = time.perf_counter()
 
             # CLIP text encoder
-            text_embeddings = self.encode_prompt(prompt, negative_prompt)
+            # if prompt is different from the previous prompt, re-encode the prompt
+
+            if not hasattr(self, 'previous_prompt'):
+                self.previous_prompt = "asfasdf"
+            if prompt != self.previous_prompt:
+                text_embeddings = self.encode_prompt(prompt, negative_prompt)
+
+
             #torch.cuda.synchronize(self.device)
             # UNet denoiser
             latents = self.denoise_latent(canny_image, init_latent, text_embeddings, timesteps=timesteps, step_offset=1)
             del init_latent
+            self.previous_latents = latents
+
 
             # VAE decode latent
             images = self.decode_latent(latents)
@@ -202,6 +187,7 @@ class VideoSDPipeline(StableDiffusionPipeline):
             for i in range(images.shape[0]):
                 out.append(Image.fromarray(images[i]))
             return out
+        
             # if not warmup:
             #     self.print_summary(self.denoising_steps, e2e_tic, e2e_toc)
             #     self.save_image(images, 'txt2img', prompt)

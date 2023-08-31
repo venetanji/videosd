@@ -1,17 +1,3 @@
-gpus:
-  #- model: stablediffusionapi/reliberate 
-  #- model: stablediffusionapi/reliberate 
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  - model: SG161222/Realistic_Vision_V5.1_noVAE
-  #- model: stablediffusionapi/reliberate 
-  #- model: stablediffusionapi/reliberate 
-  #- model: stablediffusionapi/reliberate 
-  #- model: stablediffusionapi/reliberate 
-  #- model: stablediffusionapi/reliberate 
-  #- model: stablediffusionapi/reliberate 
+model: SG161222/Realistic_Vision_V5.1_noVAE
+gpus: 8
+

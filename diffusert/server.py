@@ -19,7 +19,7 @@ from utilities import TRT_LOGGER
 import time
 #import whisper
 config = yaml.safe_load(open("config.yaml"))
-gpu_num = len(config['gpus'])
+gpu_num = config['gpus']
 from PIL import Image
 from videopipeline import VideoSDPipeline 
 from aiohttp import web, ClientSession
@@ -109,23 +109,17 @@ class VideoSDTrack(MediaStreamTrack):
     def diffuse(self,frame,gpu=0):
         print(self.options)
         cudart.cudaSetDevice(gpu)
-        torch.cuda.synchronize(gpu)
-
-        with torch.cuda.device(gpu):
-            #torch.manual_seed(423123)
-            imgs = trt_models[gpu].infer(frame.to_image(),[self.options['prompt']],
-                #prompt=,
-                num_of_infer_steps = self.options['steps'],
-                guidance_scale = self.options['guidance_scale'],
-                seed=42,
-                #img= ,
-                strength = self.options['strength'],
-                )
-            self.generating[gpu] = False
-            self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
-            print("Average gen time:", self.avg_gen_time)
-            #self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
-            self.current_frame = VideoFrame.from_image(imgs[0])
+        imgs = trt_models[gpu].infer(frame.to_image(),[self.options['prompt']],
+            #prompt=,
+            num_of_infer_steps = self.options['steps'],
+            guidance_scale = self.options['guidance_scale'],
+            strength = self.options['strength'],
+            )
+        self.generating[gpu] = False
+        self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
+        print("Average gen time:", self.avg_gen_time)
+        #self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
+        self.current_frame = VideoFrame.from_image(imgs[0])
 
 
     async def recv(self):
@@ -291,8 +285,8 @@ if __name__ == "__main__":
     for i in range(gpu_num):
         cudart.cudaSetDevice(i)
         trt_models[i] = VideoSDPipeline(device=i, scheduler="EulerA")
-        trt_models[i].loadEngines(engine_dir=config['gpus'][i]['model'])
-        trt_models[i].loadResources(360,640,1,42)
+        trt_models[i].loadEngines(engine_dir=config['model'])
+        trt_models[i].loadResources(360,640,1)
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context

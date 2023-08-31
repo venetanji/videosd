@@ -132,7 +132,7 @@ class StableDiffusionPipeline:
         self.models = {} # loaded in loadEngines()
         self.engine = {} # loaded in loadEngines()
 
-    def loadResources(self, image_height, image_width, batch_size, seed=42):
+    def loadResources(self, image_height, image_width, batch_size):
         # Initialize noise generator
 
         # Pre-compute latent input scales and linear multistep coefficients
@@ -231,12 +231,9 @@ class StableDiffusionPipeline:
                 Directory containing refit ONNX models.
         """
 
-        #self.generator = torch.cuda.manual_seed(42)
-        #torch.manual_seed(42)
-        # torch.manual_seed(42)
-        # torch.cuda.manual_seed_all(42)
-        # np.random.seed(42)
-
+        self.generator = torch.Generator(device='cuda')
+        self.generator.manual_seed(seed)
+        self.generator_init_state = self.generator.get_state()
 
         # Load text tokenizer
         self.tokenizer = make_tokenizer(self.version, self.hf_token)
@@ -467,7 +464,7 @@ class StableDiffusionPipeline:
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
             noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
             #print("Generator", self.generator)
-            latents = self.scheduler.step(noise_pred, latents, step_offset + step_index, timestep)
+            latents = self.scheduler.step(noise_pred, latents, step_offset + step_index, timestep, generator=self.generator)
 
             if self.nvtx_profile:
                 nvtx.end_range(nvtx_latent_step)
