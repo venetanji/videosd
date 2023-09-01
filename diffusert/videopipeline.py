@@ -96,7 +96,8 @@ class VideoSDPipeline(StableDiffusionPipeline):
         guidance_scale=7.5,
         seed=42,
         warmup=False,
-        verbose=False
+        verbose=False,
+        current_frame=False
     ):
         """
         Run the diffusion pipeline.
@@ -119,23 +120,25 @@ class VideoSDPipeline(StableDiffusionPipeline):
         """
         assert len(prompt) == len(negative_prompt)
         img = img.resize((640, 360), resample=Image.Resampling.LANCZOS)
+        current_frame = current_frame.resize((640, 360), resample=Image.Resampling.LANCZOS)
 
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
 
         canny_image = np.array(img)
+        current_frame = np.array(current_frame)
 
         #low_threshold = 100
         #high_threshold = 200
 
         canny_image = self.get_canny_filter(canny_image)
-
-        images = self.infertrt(img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image)
+    
+        images = self.infertrt(img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image, current_frame)
         del canny_image
         return images
 
 
-    def infertrt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image):
+    def infertrt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image, current_frame):
 
         with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER):
 
@@ -146,12 +149,14 @@ class VideoSDPipeline(StableDiffusionPipeline):
             # Pre-initialize latents
             encimg = self.preprocess_image(img, init=True)
             init_latent = self.encode_image(encimg)
+            encframe = self.preprocess_image(current_frame, init=True)
+            ref_latent = self.encode_image(encframe)
             #initialize previous_latents the first time
             if not hasattr(self, 'previous_latents'):
                 
                 self.previous_latents = init_latent
 
-            latents = init_latent * 0.05 + self.previous_latents * 0.95
+            init_latent = ref_latent * 0.8 + init_latent * 0.2
 
             
             e2e_tic = time.perf_counter()

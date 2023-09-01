@@ -114,6 +114,7 @@ class VideoSDTrack(MediaStreamTrack):
             num_of_infer_steps = self.options['steps'],
             guidance_scale = self.options['guidance_scale'],
             strength = self.options['strength'],
+            current_frame = self.current_frame.to_image()
             )
         self.generating[gpu] = False
         self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])

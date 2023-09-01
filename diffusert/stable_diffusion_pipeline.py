@@ -27,6 +27,14 @@ from PIL import Image
 import torch
 from utilities import Engine, device_view, save_image, preprocess_image
 from utilities import DPMScheduler, DDIMScheduler, EulerAncestralDiscreteScheduler, LMSDiscreteScheduler, PNDMScheduler
+from diffusers.models.attention import BasicTransformerBlock
+from diffusers.models.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, DownBlock2D, UpBlock2D
+
+def torch_dfs(model: torch.nn.Module):
+    result = [model]
+    for child in model.children():
+        result += torch_dfs(child)
+    return result
 
 class StableDiffusionPipeline:
     """
@@ -249,6 +257,8 @@ class StableDiffusionPipeline:
             self.models['unet'] = make_UNet(inpaint=self.inpaint, **models_args)
         if 'vae' in self.stages:
             self.models['vae'] = make_VAE(inpaint=self.inpaint, **models_args)
+        
+        self.unet = self.models['unet'].get_model()
 
         # Export models to ONNX
         for model_name, obj in self.models.items():
@@ -411,6 +421,375 @@ class StableDiffusionPipeline:
             nvtx.end_range(nvtx_clip)
 
         return text_embeddings
+    
+    def hack_attention(self,ref_image_latents):
+        
+        MODE = "write"
+        reference_adain = False
+        reference_attn = True
+        gn_auto_machine_weight = 1.0
+        attention_auto_machine_weight = 1.0
+        style_fidelity = 0.8
+        do_classifier_free_guidance = True
+        uc_mask = (
+            torch.Tensor([1] * 1 * 1 + [0] * 1 * 1)
+            .type_as(ref_image_latents)
+            .bool()
+        )
+
+        def hacked_basic_transformer_inner_forward(
+            self,
+            hidden_states: torch.FloatTensor,
+            attention_mask: None,
+            encoder_hidden_states:  None,
+            encoder_attention_mask:  None,
+            timestep: None,
+            cross_attention_kwargs:  None,
+            class_labels: None,
+        ):
+            if self.use_ada_layer_norm:
+                norm_hidden_states = self.norm1(hidden_states, timestep)
+            elif self.use_ada_layer_norm_zero:
+                norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
+                    hidden_states, timestep, class_labels, hidden_dtype=hidden_states.dtype
+                )
+            else:
+                norm_hidden_states = self.norm1(hidden_states)
+
+            # 1. Self-Attention
+            cross_attention_kwargs = cross_attention_kwargs if cross_attention_kwargs is not None else {}
+            if self.only_cross_attention:
+                attn_output = self.attn1(
+                    norm_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
+                    attention_mask=attention_mask,
+                    **cross_attention_kwargs,
+                )
+            else:
+                if MODE == "write":
+                    self.bank.append(norm_hidden_states.detach().clone())
+                    attn_output = self.attn1(
+                        norm_hidden_states,
+                        encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
+                        attention_mask=attention_mask,
+                        **cross_attention_kwargs,
+                    )
+                if MODE == "read":
+                    if attention_auto_machine_weight > self.attn_weight:
+                        attn_output_uc = self.attn1(
+                            norm_hidden_states,
+                            encoder_hidden_states=torch.cat([norm_hidden_states] + self.bank, dim=1),
+                            # attention_mask=attention_mask,
+                            **cross_attention_kwargs,
+                        )
+                        attn_output_c = attn_output_uc.clone()
+                        if do_classifier_free_guidance and style_fidelity > 0:
+                            attn_output_c[uc_mask] = self.attn1(
+                                norm_hidden_states[uc_mask],
+                                encoder_hidden_states=norm_hidden_states[uc_mask],
+                                **cross_attention_kwargs,
+                            )
+                        attn_output = style_fidelity * attn_output_c + (1.0 - style_fidelity) * attn_output_uc
+                        self.bank.clear()
+                    else:
+                        attn_output = self.attn1(
+                            norm_hidden_states,
+                            encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
+                            attention_mask=attention_mask,
+                            **cross_attention_kwargs,
+                        )
+            if self.use_ada_layer_norm_zero:
+                attn_output = gate_msa.unsqueeze(1) * attn_output
+            hidden_states = attn_output + hidden_states
+
+            if self.attn2 is not None:
+                norm_hidden_states = (
+                    self.norm2(hidden_states, timestep) if self.use_ada_layer_norm else self.norm2(hidden_states)
+                )
+
+                # 2. Cross-Attention
+                attn_output = self.attn2(
+                    norm_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    attention_mask=encoder_attention_mask,
+                    **cross_attention_kwargs,
+                )
+                hidden_states = attn_output + hidden_states
+
+            # 3. Feed-forward
+            norm_hidden_states = self.norm3(hidden_states)
+
+            if self.use_ada_layer_norm_zero:
+                norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+
+            ff_output = self.ff(norm_hidden_states)
+
+            if self.use_ada_layer_norm_zero:
+                ff_output = gate_mlp.unsqueeze(1) * ff_output
+
+            hidden_states = ff_output + hidden_states
+
+            return hidden_states
+
+        def hacked_mid_forward(self, *args, **kwargs):
+            eps = 1e-6
+            x = self.original_forward(*args, **kwargs)
+            if MODE == "write":
+                if gn_auto_machine_weight >= self.gn_weight:
+                    var, mean = torch.var_mean(x, dim=(2, 3), keepdim=True, correction=0)
+                    self.mean_bank.append(mean)
+                    self.var_bank.append(var)
+            if MODE == "read":
+                if len(self.mean_bank) > 0 and len(self.var_bank) > 0:
+                    var, mean = torch.var_mean(x, dim=(2, 3), keepdim=True, correction=0)
+                    std = torch.maximum(var, torch.zeros_like(var) + eps) ** 0.5
+                    mean_acc = sum(self.mean_bank) / float(len(self.mean_bank))
+                    var_acc = sum(self.var_bank) / float(len(self.var_bank))
+                    std_acc = torch.maximum(var_acc, torch.zeros_like(var_acc) + eps) ** 0.5
+                    x_uc = (((x - mean) / std) * std_acc) + mean_acc
+                    x_c = x_uc.clone()
+                    if do_classifier_free_guidance and style_fidelity > 0:
+                        x_c[uc_mask] = x[uc_mask]
+                    x = style_fidelity * x_c + (1.0 - style_fidelity) * x_uc
+                self.mean_bank = []
+                self.var_bank = []
+            return x
+
+        def hack_CrossAttnDownBlock2D_forward(
+            self,
+            hidden_states: torch.FloatTensor,
+            temb: None,
+            encoder_hidden_states:  None,
+            attention_mask:  None,
+            cross_attention_kwargs:  None,
+            encoder_attention_mask: None,
+        ):
+            eps = 1e-6
+
+
+
+
+            # TODO(Patrick, William) - attention mask is not used
+            output_states = ()
+
+            for i, (resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
+                hidden_states = resnet(hidden_states, temb)
+                hidden_states = attn(
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                    attention_mask=attention_mask,
+                    encoder_attention_mask=encoder_attention_mask,
+                    return_dict=False,
+                )[0]
+                if MODE == "write":
+                    if gn_auto_machine_weight >= self.gn_weight:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        self.mean_bank.append([mean])
+                        self.var_bank.append([var])
+                if MODE == "read":
+                    if len(self.mean_bank) > 0 and len(self.var_bank) > 0:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        std = torch.maximum(var, torch.zeros_like(var) + eps) ** 0.5
+                        mean_acc = sum(self.mean_bank[i]) / float(len(self.mean_bank[i]))
+                        var_acc = sum(self.var_bank[i]) / float(len(self.var_bank[i]))
+                        std_acc = torch.maximum(var_acc, torch.zeros_like(var_acc) + eps) ** 0.5
+                        hidden_states_uc = (((hidden_states - mean) / std) * std_acc) + mean_acc
+                        hidden_states_c = hidden_states_uc.clone()
+                        if do_classifier_free_guidance and style_fidelity > 0:
+                            hidden_states_c[uc_mask] = hidden_states[uc_mask]
+                        hidden_states = style_fidelity * hidden_states_c + (1.0 - style_fidelity) * hidden_states_uc
+
+                output_states = output_states + (hidden_states,)
+
+            if MODE == "read":
+                self.mean_bank = []
+                self.var_bank = []
+
+            if self.downsamplers is not None:
+                for downsampler in self.downsamplers:
+                    hidden_states = downsampler(hidden_states)
+
+                output_states = output_states + (hidden_states,)
+
+            return hidden_states, output_states
+
+        def hacked_DownBlock2D_forward(self, hidden_states, temb=None):
+            eps = 1e-6
+
+            output_states = ()
+
+            for i, resnet in enumerate(self.resnets):
+                hidden_states = resnet(hidden_states, temb)
+
+                if MODE == "write":
+                    if gn_auto_machine_weight >= self.gn_weight:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        self.mean_bank.append([mean])
+                        self.var_bank.append([var])
+                if MODE == "read":
+                    if len(self.mean_bank) > 0 and len(self.var_bank) > 0:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        std = torch.maximum(var, torch.zeros_like(var) + eps) ** 0.5
+                        mean_acc = sum(self.mean_bank[i]) / float(len(self.mean_bank[i]))
+                        var_acc = sum(self.var_bank[i]) / float(len(self.var_bank[i]))
+                        std_acc = torch.maximum(var_acc, torch.zeros_like(var_acc) + eps) ** 0.5
+                        hidden_states_uc = (((hidden_states - mean) / std) * std_acc) + mean_acc
+                        hidden_states_c = hidden_states_uc.clone()
+                        if do_classifier_free_guidance and style_fidelity > 0:
+                            hidden_states_c[uc_mask] = hidden_states[uc_mask]
+                        hidden_states = style_fidelity * hidden_states_c + (1.0 - style_fidelity) * hidden_states_uc
+
+                output_states = output_states + (hidden_states,)
+
+            if MODE == "read":
+                self.mean_bank = []
+                self.var_bank = []
+
+            if self.downsamplers is not None:
+                for downsampler in self.downsamplers:
+                    hidden_states = downsampler(hidden_states)
+
+                output_states = output_states + (hidden_states,)
+
+            return hidden_states, output_states
+
+        def hacked_CrossAttnUpBlock2D_forward(
+            self,
+            hidden_states: torch.FloatTensor,
+            res_hidden_states_tuple,
+            temb: None,
+            encoder_hidden_states: None,
+            cross_attention_kwargs: None,
+            upsample_size: None,
+            attention_mask: None,
+            encoder_attention_mask: None,
+        ):
+            eps = 1e-6
+            # TODO(Patrick, William) - attention mask is not used
+            for i, (resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
+                # pop res hidden states
+                res_hidden_states = res_hidden_states_tuple[-1]
+                res_hidden_states_tuple = res_hidden_states_tuple[:-1]
+                hidden_states = torch.cat([hidden_states, res_hidden_states], dim=1)
+                hidden_states = resnet(hidden_states, temb)
+                hidden_states = attn(
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                    attention_mask=attention_mask,
+                    encoder_attention_mask=encoder_attention_mask,
+                    return_dict=False,
+                )[0]
+
+                if MODE == "write":
+                    if gn_auto_machine_weight >= self.gn_weight:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        self.mean_bank.append([mean])
+                        self.var_bank.append([var])
+                if MODE == "read":
+                    if len(self.mean_bank) > 0 and len(self.var_bank) > 0:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        std = torch.maximum(var, torch.zeros_like(var) + eps) ** 0.5
+                        mean_acc = sum(self.mean_bank[i]) / float(len(self.mean_bank[i]))
+                        var_acc = sum(self.var_bank[i]) / float(len(self.var_bank[i]))
+                        std_acc = torch.maximum(var_acc, torch.zeros_like(var_acc) + eps) ** 0.5
+                        hidden_states_uc = (((hidden_states - mean) / std) * std_acc) + mean_acc
+                        hidden_states_c = hidden_states_uc.clone()
+                        if do_classifier_free_guidance and style_fidelity > 0:
+                            hidden_states_c[uc_mask] = hidden_states[uc_mask]
+                        hidden_states = style_fidelity * hidden_states_c + (1.0 - style_fidelity) * hidden_states_uc
+
+            if MODE == "read":
+                self.mean_bank = []
+                self.var_bank = []
+
+            if self.upsamplers is not None:
+                for upsampler in self.upsamplers:
+                    hidden_states = upsampler(hidden_states, upsample_size)
+
+            return hidden_states
+
+        def hacked_UpBlock2D_forward(self, hidden_states, res_hidden_states_tuple, temb=None, upsample_size=None):
+            eps = 1e-6
+            for i, resnet in enumerate(self.resnets):
+                # pop res hidden states
+                res_hidden_states = res_hidden_states_tuple[-1]
+                res_hidden_states_tuple = res_hidden_states_tuple[:-1]
+                hidden_states = torch.cat([hidden_states, res_hidden_states], dim=1)
+                hidden_states = resnet(hidden_states, temb)
+
+                if MODE == "write":
+                    if gn_auto_machine_weight >= self.gn_weight:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        self.mean_bank.append([mean])
+                        self.var_bank.append([var])
+                if MODE == "read":
+                    if len(self.mean_bank) > 0 and len(self.var_bank) > 0:
+                        var, mean = torch.var_mean(hidden_states, dim=(2, 3), keepdim=True, correction=0)
+                        std = torch.maximum(var, torch.zeros_like(var) + eps) ** 0.5
+                        mean_acc = sum(self.mean_bank[i]) / float(len(self.mean_bank[i]))
+                        var_acc = sum(self.var_bank[i]) / float(len(self.var_bank[i]))
+                        std_acc = torch.maximum(var_acc, torch.zeros_like(var_acc) + eps) ** 0.5
+                        hidden_states_uc = (((hidden_states - mean) / std) * std_acc) + mean_acc
+                        hidden_states_c = hidden_states_uc.clone()
+                        if do_classifier_free_guidance and style_fidelity > 0:
+                            hidden_states_c[uc_mask] = hidden_states[uc_mask]
+                        hidden_states = style_fidelity * hidden_states_c + (1.0 - style_fidelity) * hidden_states_uc
+
+            if MODE == "read":
+                self.mean_bank = []
+                self.var_bank = []
+
+            if self.upsamplers is not None:
+                for upsampler in self.upsamplers:
+                    hidden_states = upsampler(hidden_states, upsample_size)
+
+            return hidden_states
+
+        if reference_attn:
+            attn_modules = [module for module in torch_dfs(self.unet) if isinstance(module, BasicTransformerBlock)]
+            attn_modules = sorted(attn_modules, key=lambda x: -x.norm1.normalized_shape[0])
+
+            for i, module in enumerate(attn_modules):
+                module._original_inner_forward = module.forward
+                module.forward = hacked_basic_transformer_inner_forward.__get__(module, BasicTransformerBlock)
+                module.bank = []
+                module.attn_weight = float(i) / float(len(attn_modules))
+
+        if reference_adain:
+            gn_modules = [self.unet.mid_block]
+            self.unet.mid_block.gn_weight = 0
+
+            down_blocks = self.unet.down_blocks
+            for w, module in enumerate(down_blocks):
+                module.gn_weight = 1.0 - float(w) / float(len(down_blocks))
+                gn_modules.append(module)
+
+            up_blocks = self.unet.up_blocks
+            for w, module in enumerate(up_blocks):
+                module.gn_weight = float(w) / float(len(up_blocks))
+                gn_modules.append(module)
+
+            for i, module in enumerate(gn_modules):
+                if getattr(module, "original_forward", None) is None:
+                    module.original_forward = module.forward
+                if i == 0:
+                    # mid_block
+                    module.forward = hacked_mid_forward.__get__(module, torch.nn.Module)
+                elif isinstance(module, CrossAttnDownBlock2D):
+                    module.forward = hack_CrossAttnDownBlock2D_forward.__get__(module, CrossAttnDownBlock2D)
+                elif isinstance(module, DownBlock2D):
+                    module.forward = hacked_DownBlock2D_forward.__get__(module, DownBlock2D)
+                elif isinstance(module, CrossAttnUpBlock2D):
+                    module.forward = hacked_CrossAttnUpBlock2D_forward.__get__(module, CrossAttnUpBlock2D)
+                elif isinstance(module, UpBlock2D):
+                    module.forward = hacked_UpBlock2D_forward.__get__(module, UpBlock2D)
+                module.mean_bank = []
+                module.var_bank = []
+                module.gn_weight *= 2
+        MODE="read"
+
 
     def denoise_latent(self, img, latents, text_embeddings, timesteps=None, step_offset=0, mask=None, masked_image_latents=None):
         cudart.cudaEventRecord(self.events['denoise-start'], 0)
@@ -418,6 +797,7 @@ class StableDiffusionPipeline:
         #     print("we don't want this")
         #     timesteps = self.scheduler.timesteps
         img = self.preprocess_image(img)
+        self.hack_attention(img)
         # img = torch.cat([img] * 2, dim=0)  #？？？？这里的img是tensor张量，但是vino的是numpy
         img = torch.cat([img] * 2)
         
