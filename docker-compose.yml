@@ -48,8 +48,7 @@ services:
       - dev
 
   backend: &backend
-    <<: *x-base
-    <<: *x-gpu
+    <<: [*x-base, *x-gpu]
     build: .
     entrypoint: "python server.py"
     ports:
