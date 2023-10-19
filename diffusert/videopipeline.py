@@ -1,75 +1,77 @@
-#
-# SPDX-FileCopyrightText: Copyright (c) 1993-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-
 import numpy as np
-import nvtx
 import time
 import torch
 import cv2
-import tensorrt as trt
-from utilities import TRT_LOGGER
-from stable_diffusion_pipeline import StableDiffusionPipeline
-# from sdrefpipeline import StableDiffusionControlNetReferencePipeline
-# from diffusers.models import ControlNetModel
-# from diffusers import UniPCMultistepScheduler
-from cuda import cuda, nvrtc, cudart
+from sfast.compilers.stable_diffusion_pipeline_compiler import compile, CompilationConfig
+from diffusers import StableDiffusionControlNetImg2ImgPipeline, ControlNetModel
+import packaging.version
+
 
 from PIL import Image
 
+if packaging.version.parse(torch.__version__) >= packaging.version.parse('1.12.0'):
+    torch.backends.cuda.matmul.allow_tf32 = True
 
-
-
-
-
-class VideoSDPipeline(StableDiffusionPipeline):
+class VideoSDPipeline:
     """
     Application showcasing the acceleration of Stable Diffusion Txt2Img v1.4, v1.5, v2.0, v2.0-base, v2.1, v2.1-base pipeline using NVidia TensorRT w/ Plugins.
     """
     def __init__(
         self,
-        scheduler="DDIM",
         *args, **kwargs
     ):
-        # self.device = kwargs.get("device", "cuda")
-        # print(self.device)
-        # self.controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16)
-        # self.pipe = StableDiffusionControlNetReferencePipeline.from_pretrained(
-        #         "runwayml/stable-diffusion-v1-5",
-        #         controlnet=self.controlnet,
-        #         safety_checker=None,
-        #         torch_dtype=torch.float16
-        #         ).to(self.device)
+        self.device = kwargs.get("device", "cuda")
+        with torch.cuda.device(self.device):
+            try: 
+                self.load_model(kwargs["model"], kwargs["controlnet"])
+            except KeyError:
+                print("Model name and controlnet model must be specified")
+                raise
 
-        # self.pipe.scheduler = UniPCMultistepScheduler.from_config(self.pipe.scheduler.config)
-        """
-        Initializes the Txt2Img Diffusion pipeline.
+        self.generator = torch.Generator(device=self.device)
+        self.generator.manual_seed(42)
+        self.generator_init_state = self.generator.get_state()
 
-        Args:
-            scheduler (str):
-                The scheduler to guide the denoising process. Must be one of the [DPM, LMSD, DDIM, EulerA, PNDM].
-        """
-        super(VideoSDPipeline, self).__init__(*args, **kwargs, \
-            scheduler=scheduler, stages=['clip','unet','vae','vae_encoder'])
+    def compile_model(self):
+
+        config = CompilationConfig.Default()
+        config.enable_xformers = True
+        config.enable_triton = True
+        config.enable_cuda_graph = True
+        self.compiled_model = compile(self.model, config)
+
+        # create a dummy image 512x512
+        image = Image.new("RGB", (640, 360))
+
+        kwarg_inputs = dict(
+            prompt='a dog',
+            height=360,
+            width=640,
+            num_inference_steps=30,
+            strength=0.4,
+            image=image,
+            control_image=image,
+            num_images_per_prompt=1
+            )
+        
+        torch.cuda.set_device(self.device)
+        torch.cuda.synchronize(self.device)
+        return self.compiled_model(**kwarg_inputs).images[0]
+
+    def load_model(self, model_name, controlnet_model="lllyasviel/sd-controlnet-canny"):
+        self.controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.float16)
+        self.model = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(model_name, 
+                                                                    controlnet=self.controlnet, torch_dtype=torch.float16)
+
+        self.model.safety_checker = None
+        self.model.to(torch.device(self.device))
+        return self.model
     
     def get_canny_filter(self, image, low_threshold=100, high_threshold=200):
         image = cv2.Canny(image, low_threshold, high_threshold)
         image = image[:, :, None]
         image = np.concatenate([image, image, image], axis=2)
-        return image
+        return Image.fromarray(image)
 
     def get_color_filter(self, cond_image, mask_size=64):
         H, W = cond_image.shape[:2]
@@ -102,6 +104,7 @@ class VideoSDPipeline(StableDiffusionPipeline):
         ref=False,
         set_ref=False,
         style_fidelity = 0.5,
+        controlnet_scale = 1,
         controlnet=True
     ):
         """
@@ -123,82 +126,28 @@ class VideoSDPipeline(StableDiffusionPipeline):
             verbose (bool):
                 Verbose in logging
         """
-        print("Set ref in infer", set_ref)
         assert len(prompt) == len(negative_prompt)
         img = img.resize((640, 360), resample=Image.Resampling.LANCZOS)
         ref_frame = ref_frame.resize((640, 360), resample=Image.Resampling.LANCZOS)
-
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
-
         canny_image = np.array(img)
         ref_frame = np.array(ref_frame)
-
-        #low_threshold = 100
-        #high_threshold = 200
-
         canny_image = self.get_canny_filter(canny_image)
-    
-        with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER):
+        self.generator.set_state(self.generator_init_state)
+        self.generator.manual_seed(seed)   
 
-            self.generator.set_state(self.generator_init_state)
-            self.generator.manual_seed(seed)   
-
-            # initialize timesteps
-            timesteps, t_start = self.initialize_timesteps(num_of_infer_steps,strength)
-            # Pre-initialize latents
-            encimg = self.preprocess_image(img, init=True)
-            init_latent = self.encode_image(encimg)
-            encframe = self.preprocess_image(ref_frame, init=True)
-            self.ref_latent = self.encode_image(encframe)
-
-            # if ref_latent is not defined, use the current frame as reference
-            # if set_ref or not hasattr(self, 'ref_latent'):
-            #     self.ref_latent = self.encode_image(encframe)
-            #     print("Setting reference image")
-
-            #initialize previous_latents the first time
-            if not hasattr(self, 'previous_latents'):
-                
-                self.previous_latents = init_latent
-
-            #init_latent = self.ref_latent * 0.5 + init_latent * 0.
-
-            
-            e2e_tic = time.perf_counter()
-
-            # CLIP text encoder
-            # if prompt is different from the previous prompt, re-encode the prompt
-
-            if not hasattr(self, 'previous_prompt'):
-                self.previous_prompt = "asfasdf"
-            if prompt != self.previous_prompt:
-                text_embeddings = self.encode_prompt(prompt, negative_prompt)
-
-
-            torch.cuda.synchronize(self.device)
-            cudart.cudaSetDevice(self.device)
-            # UNet denoiser
-            latents = self.denoise_latent(canny_image, init_latent, text_embeddings, timesteps=timesteps, ref=ref, style_fidelity=style_fidelity, controlnet=controlnet)
-            self.previous_latents = latents
-
-
-            # VAE decode latent
-            images = self.decode_latent(latents)
-            del latents
-            del timesteps
-
-            #torch.cuda.synchronize()
-            e2e_toc = time.perf_counter()
-            torch.cuda.synchronize(self.device)
-
-            
-            images = ((images + 1) * 255 / 2).clamp(0, 255).detach().permute(0, 2, 3, 1).round().type(torch.uint8).cpu().numpy()
-            out = []
-            for i in range(images.shape[0]):
-                out.append(Image.fromarray(images[i]))
-            return out
-        
-            # if not warmup:
-            #     self.print_summary(self.denoising_steps, e2e_tic, e2e_toc)
-            #     self.save_image(images, 'txt2img', prompt)
+        kwarg_inputs = dict(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=image_height,
+            width=image_width,
+            num_inference_steps=num_of_infer_steps,
+            image=ref_frame,
+            control_image=canny_image,
+            generator=self.generator,
+            strength=strength
+        )
+        torch.cuda.set_device(self.device)
+        torch.cuda.synchronize(self.device)
+        return self.compiled_model(**kwarg_inputs).images[0]

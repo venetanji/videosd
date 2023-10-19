@@ -11,15 +11,10 @@ import torch
 import random
 from scipy import io as sio
 import numpy as np
-from cuda import cuda, nvrtc, cudart
-import tensorrt as trt
-from utilities import TRT_LOGGER
-
+from concurrent.futures import ProcessPoolExecutor
 
 import time
-#import whisper
-config = yaml.safe_load(open("config.yaml"))
-gpu_num = config['gpus']
+#import whisper 
 from PIL import Image
 from videopipeline import VideoSDPipeline 
 from aiohttp import web, ClientSession
@@ -35,7 +30,6 @@ logger = logging.getLogger("pc")
 pcs = set()
 relay = MediaRelay()
 bh = MediaBlackhole()
-videosd = None
 
 class STTTrack(MediaStreamTrack):
     """
@@ -109,10 +103,9 @@ class VideoSDTrack(MediaStreamTrack):
     
     def diffuse(self,frame,gpu=0):
         print(self.options)
-        cudart.cudaSetDevice(gpu)
         torch.cuda.synchronize(gpu)
         #print("options in diffuse", self.options)
-        imgs = trt_models[gpu].infer(frame.to_image(),[self.options['prompt']],
+        img = pipelines[gpu].infer(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
             seed=self.options['seed'],
             num_of_infer_steps = self.options['steps'],
@@ -126,7 +119,7 @@ class VideoSDTrack(MediaStreamTrack):
         self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
         #print("Average gen time:", self.avg_gen_time)
         #self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
-        self.current_frame = VideoFrame.from_image(imgs[0])
+        self.current_frame = VideoFrame.from_image(img)
 
 
     async def recv(self):
@@ -263,6 +256,9 @@ async def on_shutdown(app):
     pcs.clear()
 
 if __name__ == "__main__":
+    config = yaml.safe_load(open("config.yaml"))
+    gpu_num = config['gpus']
+
     parser = argparse.ArgumentParser(
         description="WebRTC audio / video / data-channels demo"
     )
@@ -299,18 +295,15 @@ if __name__ == "__main__":
     })
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
-    trt_models = [None for i in range(gpu_num)]
-
-    trt.init_libnvinfer_plugins(TRT_LOGGER, '')
+    pipelines = [None for i in range(gpu_num)]
     
     # load trt model into every gpus
     # TODO make this async and return when all models are loaded
-    
+
     for i in range(gpu_num):
-        cudart.cudaSetDevice(i)
-        trt_models[i] = VideoSDPipeline(device=i, scheduler="EulerA")
-        trt_models[i].loadEngines(engine_dir=config['model'])
-        trt_models[i].loadResources(360,640,1)
+        config['device'] = i
+        pipelines[i] = VideoSDPipeline(**config)
+        pipelines[i].compile_model()
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
