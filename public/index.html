@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Bootstrap demo</title>
+    <title>VideoSD - Redomond.ai</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-gH2yIJqKdNHPEq0n4Mqa/HGKIhSkIHeL5AyhkYV8i59U5AR6csBvApHHNl/vI1Bx" crossorigin="anonymous">
     <link rel="stylesheet" href="style.css">
   </head>
@@ -11,32 +11,110 @@
 
     <div id="gen" class="container-fluid py-3">
         <div class='row'>
-            <div class="col-8 px-10">
+            <div class="col-10 px-10">
                 <canvas id="canvas"> </canvas>
                 <div class="output">
                     <video id="genvideo" autoplay="true" playsinline="true"></video>
                 </div>
             </div>
-            <div class="col-4 px-10">
+            <div id='controls' class="col-2 px-10">
                 
                 <div class="camera">
                     <video id="video" muted autoplay playsinline>Video stream not available.</video>
                 </div>
-                <input type="range" class="form-range" min="0.05" max="1" step ="0.025" value="0.4" id="strength">
-                <input type="range" class="form-range" min="1" max="50" step ="0.025" value="7.5" id="guidance_scale">
-                <div class="mb-3">
-                    <textarea class="form-control" rows="3" id="prompt" placeholder="Enter your prompt here" value="" />Under water</textarea>
-                </div>
-                <button id="record" class="btn btn-primary mb-3 btn-block">Hold and speak</button>
-                <button id="startbutton" class="btn btn-primary mb-3">Fullscreen</button>
-            </div>
-        </div>
-        <div class='row'>
-            <div class="col px-10">
+                <div class="accordion" id="accordionExample">
+                  <div class="accordion-item">
+                    <h2 class="accordion-header" id="headingThree">
+                      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
+                        Prompt
+                      </button>
+                    </h2>
+                    <div id="collapseThree" class="accordion-collapse collapse show" aria-labelledby="headingThree" data-bs-parent="#accordionExample">
+                      <div class="accordion-body">
 
+
+                        <label for="styleDropdown">Examples: </label>
+                        <select id="style_dropdown" class="form-control mb-2">
+                            <option value="1">Colored pencil drawing</option>
+                            <option value="2">Star Wars</option>
+                            <option value="3">Pixar cartoon, cg</option>
+                            <option value="4">Biden</option>
+                            <option value="5">On fire</option>
+                            <option value="6">White marble statues</option>
+                            <option value="7">Anime</option>
+                            <option value="8">Dark walnut wood engraving</option>
+                        </select>
+                        
+                        <div class="mb-2">
+                            <textarea class="form-control" rows="4" id="prompt" placeholder="Enter your prompt here" value="" />Colored pencil drawing</textarea>
+                        </div>
+                        <label for="record" class="mb-1">Speech recognition</label>
+                        <button id="record" class="btn btn-primary btn-block">Hold and speak</button>
+                      </div> 
+                    </div>
+                  </div>
+                    <div class="accordion-item">
+                      <h2 class="accordion-header" id="headingOne">
+                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="true" aria-controls="collapseOne">
+                          Diffusion Settings
+                        </button>
+                      </h2>
+                      <div id="collapseOne" class="accordion-collapse collapse" aria-labelledby="headingOne" data-bs-parent="#accordionExample">
+                        <div class="accordion-body">
+                    
+
+                          <div><label for="steps">Steps</label><input type="range" class="form-range" min="1" max="70" step ="1" value="30" id="steps" name="steps"></div>
+                          <div><label for="strength">Strength</label><input type="range" class="form-range" min="0.05" max="1" step ="0.025" value="0.9" id="strength"></div>
+                          <div><label for="guidance_scale">Follow prompt</label><input type="range" class="form-range" min="1.025" max="15" step ="0.025" value="7.5" id="guidance_scale"></div>
+                          <label for="seed">Seed</label>
+                          <div class="input-group mb-1">
+                              <input id="seed" class="form-control" type="text" placeholder="Seed" value="42">
+                              <button id="randomize" class="btn btn-outline-secondary" type="button">🎲</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="accordion-item">
+                      <h2 class="accordion-header" id="headingTwo">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
+                          Controlnet
+                        </button>
+                      </h2>
+                      <div id="collapseTwo" class="accordion-collapse collapse" aria-labelledby="headingTwo" data-bs-parent="#accordionExample">
+                        <div class="accordion-body">
+                          <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" value="" id="controlnet" checked>
+                            <label class="form-check-label" for="flexCheckChecked">
+                              Enable Controlnet
+                            </label>
+                          </div>
+
+                          <label for="reference" class="mb-1">Reference Image</label>
+                          <div class="input-group mb-1">
+                              <div class="input-group-text">
+                                  <input id="reference" class="form-check-input mt-0" type="checkbox" placeholder="Reference Image">
+                              </div>
+                              <button id="set_reference" class="btn btn-outline-secondary " type="button">🔄 Reset</button>
+                              <div class="mt-3"><label for="style_fidelity">Style Fidelity</label>
+                              <input type="range" id="style_fidelity" class="form-range" name="style_fidelity" value="1" min="0" max="1" step="0.01" /></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                  </div>
+                <button id="startbutton" class="btn btn-primary mt-3">Fullscreen</button>
+                <div class="mt-3 text-end logo" >
+                  <small>Powered by</small>
+                  <a href="https://redmond.ai" class="footerlink" target="_blank">
+                    <img class="float-end" src="https://redmond.ai/wp-content/uploads/2023/02/logo.png" height="30" alt=""/>
+                  </a>
+                  
             </div>
         </div>
-    </div>
+
+	  
+      </dev></div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-A3rJD856KowSb7dwlZdYEkO39Gagi7vIsF0jrRAoQmDKKtQBHUuLZ9AsSv4jD4Xa" crossorigin="anonymous"></script>
     <script src="app.js"></script>
   </body>

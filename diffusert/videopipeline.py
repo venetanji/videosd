@@ -26,6 +26,7 @@ from stable_diffusion_pipeline import StableDiffusionPipeline
 # from sdrefpipeline import StableDiffusionControlNetReferencePipeline
 # from diffusers.models import ControlNetModel
 # from diffusers import UniPCMultistepScheduler
+from cuda import cuda, nvrtc, cudart
 
 from PIL import Image
 
@@ -88,7 +89,7 @@ class VideoSDPipeline(StableDiffusionPipeline):
         self,
         img,
         prompt,
-        negative_prompt=["text, distorted face, blurry, bad quality, bad anatomy, low quality"],
+        negative_prompt=["deformed iris, deformed pupils, semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime, mutated hands and fingers, deformed, distorted, disfigured, poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, disconnected limbs, mutation, mutated, ugly, disgusting, amputation"],
         image_height=360,
         image_width=640,
         strength=0.4,
@@ -97,7 +98,11 @@ class VideoSDPipeline(StableDiffusionPipeline):
         seed=42,
         warmup=False,
         verbose=False,
-        current_frame=False
+        ref_frame=False,
+        ref=False,
+        set_ref=False,
+        style_fidelity = 0.5,
+        controlnet=True
     ):
         """
         Run the diffusion pipeline.
@@ -118,45 +123,46 @@ class VideoSDPipeline(StableDiffusionPipeline):
             verbose (bool):
                 Verbose in logging
         """
+        print("Set ref in infer", set_ref)
         assert len(prompt) == len(negative_prompt)
         img = img.resize((640, 360), resample=Image.Resampling.LANCZOS)
-        current_frame = current_frame.resize((640, 360), resample=Image.Resampling.LANCZOS)
+        ref_frame = ref_frame.resize((640, 360), resample=Image.Resampling.LANCZOS)
 
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
 
         canny_image = np.array(img)
-        current_frame = np.array(current_frame)
+        ref_frame = np.array(ref_frame)
 
         #low_threshold = 100
         #high_threshold = 200
 
         canny_image = self.get_canny_filter(canny_image)
     
-        images = self.infertrt(img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image, current_frame)
-        del canny_image
-        return images
-
-
-    def infertrt(self, img, num_of_infer_steps, strength, prompt, negative_prompt, canny_image, current_frame):
-
         with torch.inference_mode(), torch.autocast("cuda"), trt.Runtime(TRT_LOGGER):
 
             self.generator.set_state(self.generator_init_state)
+            self.generator.manual_seed(seed)   
 
             # initialize timesteps
             timesteps, t_start = self.initialize_timesteps(num_of_infer_steps,strength)
             # Pre-initialize latents
             encimg = self.preprocess_image(img, init=True)
             init_latent = self.encode_image(encimg)
-            encframe = self.preprocess_image(current_frame, init=True)
-            ref_latent = self.encode_image(encframe)
+            encframe = self.preprocess_image(ref_frame, init=True)
+            self.ref_latent = self.encode_image(encframe)
+
+            # if ref_latent is not defined, use the current frame as reference
+            # if set_ref or not hasattr(self, 'ref_latent'):
+            #     self.ref_latent = self.encode_image(encframe)
+            #     print("Setting reference image")
+
             #initialize previous_latents the first time
             if not hasattr(self, 'previous_latents'):
                 
                 self.previous_latents = init_latent
 
-            init_latent = ref_latent * 0.8 + init_latent * 0.2
+            #init_latent = self.ref_latent * 0.5 + init_latent * 0.
 
             
             e2e_tic = time.perf_counter()
@@ -170,10 +176,10 @@ class VideoSDPipeline(StableDiffusionPipeline):
                 text_embeddings = self.encode_prompt(prompt, negative_prompt)
 
 
-            #torch.cuda.synchronize(self.device)
+            torch.cuda.synchronize(self.device)
+            cudart.cudaSetDevice(self.device)
             # UNet denoiser
-            latents = self.denoise_latent(canny_image, init_latent, text_embeddings, timesteps=timesteps, step_offset=1)
-            del init_latent
+            latents = self.denoise_latent(canny_image, init_latent, text_embeddings, timesteps=timesteps, ref=ref, style_fidelity=style_fidelity, controlnet=controlnet)
             self.previous_latents = latents
 
 
@@ -182,9 +188,9 @@ class VideoSDPipeline(StableDiffusionPipeline):
             del latents
             del timesteps
 
-            torch.cuda.synchronize()
+            #torch.cuda.synchronize()
             e2e_toc = time.perf_counter()
-            #torch.cuda.synchronize(self.device)
+            torch.cuda.synchronize(self.device)
 
             
             images = ((images + 1) * 255 / 2).clamp(0, 255).detach().permute(0, 2, 3, 1).round().type(torch.uint8).cpu().numpy()

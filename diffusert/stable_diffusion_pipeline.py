@@ -422,14 +422,14 @@ class StableDiffusionPipeline:
 
         return text_embeddings
     
-    def hack_attention(self,ref_image_latents):
+    def hack_attention(self,ref_image_latents,style_fidelity):
         
         MODE = "write"
         reference_adain = False
         reference_attn = True
         gn_auto_machine_weight = 1.0
         attention_auto_machine_weight = 1.0
-        style_fidelity = 0.8
+        style_fidelity = 1.0
         do_classifier_free_guidance = True
         uc_mask = (
             torch.Tensor([1] * 1 * 1 + [0] * 1 * 1)
@@ -791,17 +791,27 @@ class StableDiffusionPipeline:
         MODE="read"
 
 
-    def denoise_latent(self, img, latents, text_embeddings, timesteps=None, step_offset=0, mask=None, masked_image_latents=None):
+    def denoise_latent(self, img, latents, text_embeddings, timesteps=None, step_offset=0, mask=None, masked_image_latents=None, ref=False, style_fidelity=0.5, controlnet=True):
         cudart.cudaEventRecord(self.events['denoise-start'], 0)
+        print("Controlnet", controlnet)
         # if not isinstance(timesteps, torch.Tensor):
         #     print("we don't want this")
         #     timesteps = self.scheduler.timesteps
+        if not hasattr(self, 'previous_style_fidelity'):
+            self.previous_style_fidelity = 0.5
         img = self.preprocess_image(img)
-        self.hack_attention(img)
+        # if ref and not style_fidelity == self.previous_style_fidelity:
+        #     print("hack attention")
+        #     self.hack_attention(img,style_fidelity=style_fidelity)
+        #     self.previous_style_fidelity = style_fidelity
+            
         # img = torch.cat([img] * 2, dim=0)  #？？？？这里的img是tensor张量，但是vino的是numpy
         img = torch.cat([img] * 2)
         
         total_steps = float(len(timesteps))
+        cudart.cudaSetDevice(self.device)
+        device_img = device_view(img)
+        
         for step_index, timestep in enumerate(timesteps):
             if self.nvtx_profile:
                 nvtx_latent_scale = nvtx.start_range(message='latent_scale', color='pink')
@@ -824,15 +834,13 @@ class StableDiffusionPipeline:
             sample_inp = device_view(latent_model_input)
             timestep_inp = device_view(timestep_float)
             embeddings_inp = device_view(text_embeddings)
-            # if float(step_index) / total_steps > 0.7:
-            #     noise_pred = self.runEngine('unet', {"sample": sample_inp, 
-            #                                          "timestep": timestep_inp, 
-            #                                          "encoder_hidden_states": embeddings_inp})['latent']
-            # else:
-            device_img = device_view(img)
-            noise_pred = self.runEngine('unet', {"sample": sample_inp, "timestep": timestep_inp, "encoder_hidden_states": embeddings_inp,
+            if True:               
+                noise_pred = self.runEngine('unet', {"sample": sample_inp, "timestep": timestep_inp, "encoder_hidden_states": embeddings_inp,
                                         "controlnet_cond":device_img})['latent']
-
+            else:
+                noise_pred = self.runEngine('unet', {"sample": sample_inp, 
+                                        "timestep": timestep_inp, 
+                                        "encoder_hidden_states": embeddings_inp})['latent']
       
             if self.nvtx_profile:
                 nvtx.end_range(nvtx_unet)

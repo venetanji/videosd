@@ -28,6 +28,17 @@ services:
       - production
       - dev
 
+  comfyui:
+    <<: *x-gpu
+    build: ./docker/comfyui
+    entrypoint: "sleep infinity"
+    profiles:
+      - comfyui
+    volumes:
+      - /home/ubuntu/sd-webui-discord/data/:/a1111
+    ports:
+      - 8188:8188
+
   frontend: &frontend
     image: nginx
     volumes:

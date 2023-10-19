@@ -104,21 +104,27 @@ class VideoSDTrack(MediaStreamTrack):
         #initialize the frame as black empty
         self.img = Image.new('RGB', (512, 512), (0, 0, 0))
         self.current_frame = None
+        self.ref_frame = None
         self.gen_task = None
     
     def diffuse(self,frame,gpu=0):
         print(self.options)
         cudart.cudaSetDevice(gpu)
+        torch.cuda.synchronize(gpu)
+        #print("options in diffuse", self.options)
         imgs = trt_models[gpu].infer(frame.to_image(),[self.options['prompt']],
-            #prompt=,
+            ref=self.options['ref'],
+            seed=self.options['seed'],
             num_of_infer_steps = self.options['steps'],
             guidance_scale = self.options['guidance_scale'],
             strength = self.options['strength'],
-            current_frame = self.current_frame.to_image()
-            )
+            ref_frame = self.ref_frame.to_image(),
+            style_fidelity = self.options['style_fidelity'],
+            controlnet = self.options['controlnet'],
+        )
         self.generating[gpu] = False
         self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
-        print("Average gen time:", self.avg_gen_time)
+        #print("Average gen time:", self.avg_gen_time)
         #self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
         self.current_frame = VideoFrame.from_image(imgs[0])
 
@@ -129,14 +135,16 @@ class VideoSDTrack(MediaStreamTrack):
             if not self.generating[gpu]:
                 if not self.current_frame:
                     self.current_frame = frame
+                    self.ref_frame = frame
                 if time.time() - np.max(self.last_gen_start) < self.avg_gen_time/gpu_num: break
                 self.generating[gpu] = True
                 self.last_gen_start[gpu] = time.time()
                 if not self.current_frame:
                     self.current_frame = frame
-                print("Generating on GPU ", gpu)
+                #print("Generating on GPU ", gpu)
                 asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame,gpu)
                 break
+        self.ref_frame = self.current_frame
         self.current_frame.pts = frame.pts
         self.current_frame.time_base = frame.time_base
         return self.current_frame
@@ -165,16 +173,31 @@ async def offer(request):
             @channel.on("message")
             def on_message(message):
                 message = json.loads(message)
+                print("on message pre", message)
                 if 'strength' in message:
                     message['strength'] = float(message['strength'])
                 if 'steps' in message:
                     message['steps'] = int(message['steps'])
                 if 'guidance_scale' in message:
                     message['guidance_scale'] = float(message['guidance_scale'])
+                if 'style_fidelity' in message:
+                    message['style_fidelity'] = float(message['style_fidelity'])
+                if 'seed' in message:
+                    message['seed'] = int(message['seed'])
+                if 'ref' in message:
+                    message['ref'] = bool(message['ref'])
+                if 'controlnet' in message:
+                    message['controlnet'] = bool(message['controlnet']) 
+                if 'set_ref' in message:
+                    tracks['video'].ref_frame = tracks['video'].current_frame
+                    #print("set ref bool in on message", message['set_ref'])
+
+
                 for key, value in message.items():
                     tracks['video'].options[key] = value
 
-                print(message)
+                print("on message post", tracks['video'].options)
+
         elif channel.label == "record":
             @channel.on("message")
             def on_message(message):
@@ -217,13 +240,13 @@ async def offer(request):
             await bh.stop()
 
     # handle offer
-    print(offer)
+    #print(offer)
     await pc.setRemoteDescription(offer)
     await bh.start()
 
     # send answer
     answer = await pc.createAnswer()
-    print(answer)
+    #print(answer)
     await pc.setLocalDescription(answer)
 
     return web.Response(

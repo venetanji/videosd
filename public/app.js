@@ -24,12 +24,40 @@
     const strength = document.getElementById("strength");
     const guidance_scale = document.getElementById("guidance_scale");
     const steps = document.getElementById("steps");
+    const dropdown = document.getElementById("style_dropdown");
+    const randomize_button = document.getElementById("randomize");
+    const seed = document.getElementById("seed");
+    const reference = document.getElementById("reference");
+    const set_reference = document.getElementById("set_reference");
+    const style_fidelity = document.getElementById("style_fidelity");
+    const controlnet = document.getElementById("controlnet");
+
+
+    randomize_button.onclick = function() {
+        seed.value = Math.floor(Math.random() * 1000000000);
+        seed.oninput()
+    }
 
     // add listener to promptelement on input
 
 
     var pc = null;
     var dc = null;
+
+    function updateTextarea() {
+        
+        promptelement.value = dropdown.options[dropdown.selectedIndex].text;
+        
+        // Dispatch an input event
+        var event = new Event('input', {
+            bubbles: true,
+            cancelable: true,
+        });
+        promptelement.dispatchEvent(event);
+    }
+
+    dropdown.onchange = updateTextarea;
+
 
     function negotiate() {
         return pc.createOffer().then(function(offer) {
@@ -57,7 +85,11 @@
               "prompt": promptelement.value,
               "strength": parseFloat(strength.value),
               "guidance_scale": parseFloat(guidance_scale.value),
-              "steps": parseInt(steps.value)
+              "steps": parseInt(steps.value),
+              "seed": parseInt(seed.value),
+              "style_fidelity": 0.5,
+              "ref": reference.checked,
+              "controlnet": controlnet.checked
             }
            
             return fetch('/offer', {
@@ -102,6 +134,29 @@
         steps.oninput = function() {
             promptdc.send(JSON.stringify({steps: steps.value}))
         }
+        seed.oninput = function() {
+            promptdc.send(JSON.stringify({seed: seed.value}))
+        }
+        reference.oninput = function() {
+            promptdc.send(JSON.stringify({ref: reference.value}))
+        }
+
+        set_reference.onclick = function() {
+            promptdc.send(JSON.stringify({set_ref: set_reference.checked}))
+        }
+
+        style_fidelity.oninput = function() {
+            promptdc.send(JSON.stringify({style_fidelity: style_fidelity.value}))
+        }
+
+        controlnet.oninput = function() {
+            promptdc.send(JSON.stringify({controlnet: controlnet.checked, ref: false}))
+            if (!controlnet.checked) {
+                reference.checked = false
+            }
+            
+        }
+        
 
         recorddc = pc.createDataChannel('record', {"ordered": true});
         recorddc.onmessage = function(evt) {
@@ -145,7 +200,7 @@
       const recordButton = document.getElementById('record');
 
       navigator.mediaDevices
-        .getUserMedia({ video: {facingMode: 'environment'}, audio: true })
+        .getUserMedia({ video: {facingMode: 'user'}, audio: true })
         .then((stream) => {
           video.srcObject = stream;
           video.play();
