@@ -64,7 +64,7 @@ class VideoSDPipeline:
         return self.compiled_model(**kwarg_inputs).images[0]
 
     def load_model(self, model_name, controlnet_model="lllyasviel/sd-controlnet-canny"):
-        self.controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.float32)
+        #self.controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.float32)
         # self.model = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(model_name, 
         #                                                             controlnet=self.controlnet, torch_dtype=torch.float16)
         #self.model = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7", custom_pipeline="latent_consistency_txt2img", custom_revision="main", revision="fb9c5d")
@@ -72,7 +72,7 @@ class VideoSDPipeline:
                 pretrained_model_name_or_path="SimianLuo/LCM_Dreamshaper_v7",
                 safety_checker=None
             )
-        self.model.controlnet = self.controlnet.to(torch.device(self.device))
+        #self.model.controlnet = self.controlnet.to(torch.device(self.device))
         self.model.safety_checker = None
         self.model.to(torch.device(self.device))
         return self.model

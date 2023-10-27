@@ -8,3 +8,4 @@ aiohttp
 aiohttp_cors
 av
 aiortc
+opencv-python

@@ -5,8 +5,6 @@ x-base: &x-base
     - LOG_LEVEL=INFO
   volumes:
     - ./diffusert:/workspace/diffusert/
-    - engines:/engines
-    - onnx:/onnx
     - ~/.cache/huggingface:/root/.cache/huggingface
   working_dir: /workspace/diffusert
 
@@ -25,8 +23,7 @@ services:
     environment:
       - ASR_MODEL=small
     profiles:
-      - production
-      - dev
+      - speech
 
   frontend: &frontend
     image: nginx
@@ -45,12 +42,13 @@ services:
     environment:
       - BACKEND_HOST=backend-dev
     profiles:
+      - ''
       - dev
 
   backend: &backend
     <<: [*x-base,*x-gpu]
     build: .
-    entrypoint: "python server.py"
+    entrypoint: "python3 server.py"
     ports:
       - 8080:8080
     profiles:
@@ -61,21 +59,14 @@ services:
     image: videosd-backend
     entrypoint: "sleep infinity"
     profiles:
+      - ''
       - dev
-
-  compile:
-    <<: *backend
-    image: videosd-backend
-    entrypoint: "python compile.py"
-    profiles:
-      - compile
 
   wireguard:
     image: lscr.io/linuxserver/wireguard:latest
     container_name: wireguard
     profiles:
-      - dev
-      - production
+      - wireguard
 
     cap_add:
       - NET_ADMIN
@@ -100,7 +91,3 @@ services:
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
     restart: unless-stopped
-
-volumes:
-  engines:
-  onnx:
