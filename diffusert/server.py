@@ -105,13 +105,15 @@ class VideoSDTrack(MediaStreamTrack):
         print(self.options)
         torch.cuda.synchronize(gpu)
         #print("options in diffuse", self.options)
+        ref_frame = self.current_frame.to_image()
+        #ref_frame.save('ref_frame.png')
         img = pipelines[gpu].infer(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
             seed=self.options['seed'],
             num_of_infer_steps = self.options['steps'],
             guidance_scale = self.options['guidance_scale'],
             strength = self.options['strength'],
-            ref_frame = self.ref_frame.to_image(),
+            ref_frame = ref_frame,
             style_fidelity = self.options['style_fidelity'],
             controlnet = self.options['controlnet'],
         )
@@ -137,7 +139,7 @@ class VideoSDTrack(MediaStreamTrack):
                 #print("Generating on GPU ", gpu)
                 asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame,gpu)
                 break
-        self.ref_frame = self.current_frame
+
         self.current_frame.pts = frame.pts
         self.current_frame.time_base = frame.time_base
         return self.current_frame
@@ -181,8 +183,8 @@ async def offer(request):
                     message['ref'] = bool(message['ref'])
                 if 'controlnet' in message:
                     message['controlnet'] = bool(message['controlnet']) 
-                if 'set_ref' in message:
-                    tracks['video'].ref_frame = tracks['video'].current_frame
+                # if 'set_ref' in message:
+                #     tracks['video'].ref_frame = tracks['video'].current_frame
                     #print("set ref bool in on message", message['set_ref'])
 
 
@@ -303,7 +305,8 @@ if __name__ == "__main__":
     for i in range(gpu_num):
         config['device'] = i
         pipelines[i] = VideoSDPipeline(**config)
-        pipelines[i].compile_model()
+        if config['compile']:
+            pipelines[i].compile_model()
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context

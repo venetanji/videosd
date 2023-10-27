@@ -4,3 +4,6 @@ diffusert/onnx
 diffusert/__pycache__
 diffusert/output
 /wg
+
+#ignore all pycache anywhere
+**/__pycache__

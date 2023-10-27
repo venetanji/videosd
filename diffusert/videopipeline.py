@@ -3,8 +3,10 @@ import time
 import torch
 import cv2
 from sfast.compilers.stable_diffusion_pipeline_compiler import compile, CompilationConfig
-from diffusers import StableDiffusionControlNetImg2ImgPipeline, ControlNetModel
+from diffusers import DiffusionPipeline, ControlNetModel
 import packaging.version
+#from .lcm.lcm_pipeline import LatentConsistencyModelPipeline
+from lcm.lcm_i2i_pipeline import LatentConsistencyModelImg2ImgPipeline
 
 
 from PIL import Image
@@ -40,9 +42,11 @@ class VideoSDPipeline:
         config.enable_cuda_graph = True
         self.compiled_model = compile(self.model, config)
 
-        # create a dummy image 512x512
-        image = Image.new("RGB", (640, 360))
+        # create a dummy noisy image 640x360
+        image = Image.fromarray(np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8))
 
+        canny_image = self.get_canny_filter(np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8), low_threshold=100, high_threshold=200)
+        
         kwarg_inputs = dict(
             prompt='a dog',
             height=360,
@@ -50,7 +54,8 @@ class VideoSDPipeline:
             num_inference_steps=30,
             strength=0.4,
             image=image,
-            control_image=image,
+
+            #control_image=canny_image,
             num_images_per_prompt=1
             )
         
@@ -59,10 +64,15 @@ class VideoSDPipeline:
         return self.compiled_model(**kwarg_inputs).images[0]
 
     def load_model(self, model_name, controlnet_model="lllyasviel/sd-controlnet-canny"):
-        self.controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.float16)
-        self.model = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(model_name, 
-                                                                    controlnet=self.controlnet, torch_dtype=torch.float16)
-
+        self.controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.float32)
+        # self.model = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(model_name, 
+        #                                                             controlnet=self.controlnet, torch_dtype=torch.float16)
+        #self.model = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7", custom_pipeline="latent_consistency_txt2img", custom_revision="main", revision="fb9c5d")
+        self.model = LatentConsistencyModelImg2ImgPipeline.from_pretrained(
+                pretrained_model_name_or_path="SimianLuo/LCM_Dreamshaper_v7",
+                safety_checker=None
+            )
+        self.model.controlnet = self.controlnet.to(torch.device(self.device))
         self.model.safety_checker = None
         self.model.to(torch.device(self.device))
         return self.model
@@ -132,22 +142,26 @@ class VideoSDPipeline:
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
         canny_image = np.array(img)
-        ref_frame = np.array(ref_frame)
         canny_image = self.get_canny_filter(canny_image)
         self.generator.set_state(self.generator_init_state)
         self.generator.manual_seed(seed)   
 
         kwarg_inputs = dict(
             prompt=prompt,
-            negative_prompt=negative_prompt,
+            #negative_prompt=negative_prompt,
             height=image_height,
             width=image_width,
             num_inference_steps=num_of_infer_steps,
-            image=ref_frame,
+            image=img,
             control_image=canny_image,
-            generator=self.generator,
+            #generator=self.generator,
             strength=strength
         )
+        
         torch.cuda.set_device(self.device)
         torch.cuda.synchronize(self.device)
-        return self.compiled_model(**kwarg_inputs).images[0]
+        torch.manual_seed(seed)
+        if hasattr(self, "compiled_model"):
+            return self.compiled_model(**kwarg_inputs).images[0]
+        else:
+            return self.model(**kwarg_inputs).images[0]
