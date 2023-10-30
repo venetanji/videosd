@@ -337,20 +337,21 @@ class LatentConsistencyModelImg2ImgPipeline(DiffusionPipeline):
         w_embedding = self.get_w_embedding(w, embedding_dim=256).to(device=device, dtype=latents.dtype)
         #prompt_embeds = torch.cat([prompt_embeds] * 2)
         latents = latents.to(prompt_embeds.dtype)
-        #latent_model_input = torch.cat([latents] * 2)
+        latent_model_input = torch.cat([latents] * 2)
 
         #prompt_embeds = torch.cat([prompt_embeds] * 2)
         # 7. LCM MultiStep Sampling Loop:
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 ts = torch.full((bs,), t, device=device, dtype=torch.long)
-               
+                cns = torch.full((bs,), 1000, device=device, dtype=torch.long)\
+
                 if False:
                     controlnet_input = latents
                     controlnet_embeds = prompt_embeds
                     down_block_res_samples, mid_block_res_sample = self.controlnet(
                         controlnet_input,
-                        ts,
+                        cns,
                         encoder_hidden_states=controlnet_embeds,
                         controlnet_cond=control_image,
                         conditioning_scale=0.5,
@@ -691,7 +692,10 @@ class LCMSchedulerWithTimestamp(SchedulerMixin, ConfigMixin):
         # LCM Timesteps Setting:  # Linear Spacing
         c = self.config.num_train_timesteps // lcm_origin_steps
         lcm_origin_timesteps = np.asarray(list(range(1, int(lcm_origin_steps * stength) + 1))) * c - 1  # LCM Training  Steps Schedule
+        print("lcm_origin_timesteps: ", lcm_origin_timesteps)
+        self.lcm_origin_timesteps = torch.from_numpy(lcm_origin_timesteps.copy()).to(device)
         skipping_step = len(lcm_origin_timesteps) // num_inference_steps
+        print("skipping_step: ", skipping_step)
         timesteps = lcm_origin_timesteps[::-skipping_step][:num_inference_steps]  # LCM Inference Steps Schedule
 
         self.timesteps = torch.from_numpy(timesteps.copy()).to(device)
