@@ -11,7 +11,7 @@ import torch
 import random
 from scipy import io as sio
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
 import time
 #import whisper 
@@ -23,13 +23,17 @@ from av import VideoFrame, AudioFifo
 
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
-
+from threading import  Lock
+import concurrent.futures
 ROOT = os.path.dirname(__file__)
 
 logger = logging.getLogger("pc")
 pcs = set()
 relay = MediaRelay()
 bh = MediaBlackhole()
+global lock
+lock = Lock()
+pool = ThreadPoolExecutor()
 
 class STTTrack(MediaStreamTrack):
     """
@@ -96,7 +100,7 @@ class VideoSDTrack(MediaStreamTrack):
         self.last_gen_frame = time.time()
         self.avg_gen_time = 0.4
         #initialize the frame as black empty
-        self.img = Image.new('RGB', (512, 512), (0, 0, 0))
+        self.img = Image.new('RGB', (1280,720), (0, 0, 0))
         self.current_frame = None
         self.ref_frame = None
         self.gen_task = None
@@ -105,7 +109,6 @@ class VideoSDTrack(MediaStreamTrack):
         print(self.options)
         torch.cuda.synchronize(gpu)
         #print("options in diffuse", self.options)
-        ref_frame = self.current_frame.to_image()
         #ref_frame.save('ref_frame.png')
         img = pipelines[gpu].infer(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
@@ -113,16 +116,19 @@ class VideoSDTrack(MediaStreamTrack):
             num_of_infer_steps = self.options['steps'],
             guidance_scale = self.options['guidance_scale'],
             strength = self.options['strength'],
-            ref_frame = ref_frame,
+            ref_frame = self.ref_frame,
             style_fidelity = self.options['style_fidelity'],
             controlnet = self.options['controlnet'],
         )
+
+        #print("Average gen time:", self.avg_gen_time)
+        #self.img.paste(img,((gpu//2)*img.width,(gpu%2)*img.height))
+
+        # check if no other process is setting the frame and acquire lock
         self.generating[gpu] = False
         self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
-        #print("Average gen time:", self.avg_gen_time)
-        #self.img.paste(imgs[0],(gpu*imgs[0].width,gpu*imgs[0].height))
-        self.current_frame = VideoFrame.from_image(img)
-
+        with lock:
+            self.current_frame = VideoFrame.from_image(img)
 
     async def recv(self):
         frame = await self.track.recv()
@@ -131,18 +137,24 @@ class VideoSDTrack(MediaStreamTrack):
                 if not self.current_frame:
                     self.current_frame = frame
                     self.ref_frame = frame
+                if gpu == 0:
+                    self.ref_frame = self.current_frame.to_image()
+
                 if time.time() - np.max(self.last_gen_start) < self.avg_gen_time/gpu_num: break
                 self.generating[gpu] = True
+                print(self.generating)
                 self.last_gen_start[gpu] = time.time()
                 if not self.current_frame:
                     self.current_frame = frame
                 #print("Generating on GPU ", gpu)
-                asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame,gpu)
+                asyncio.get_running_loop().run_in_executor(pool, self.diffuse,frame,gpu)
                 break
 
-        self.current_frame.pts = frame.pts
-        self.current_frame.time_base = frame.time_base
-        return self.current_frame
+        with lock:
+            outframe = VideoFrame.from_image(self.current_frame.to_image().resize((640, 360), resample=Image.Resampling.LANCZOS))
+            outframe.pts = frame.pts
+            outframe.time_base = frame.time_base
+        return outframe
 
 async def offer(request):
     params = await request.json()
