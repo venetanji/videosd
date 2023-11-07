@@ -792,7 +792,16 @@ class LatentConsistencyModelPipeline_reference(DiffusionPipeline):
                     hidden_states = upsampler(hidden_states, upsample_size)
 
             return hidden_states
+        # if hasattr(self, "prev_reference_attn"):
+        #     print("prev_reference_attn exists")
+        #     attn_change = self.prev_reference_attn != reference_attn
+        # else:
+        #     print("prev_reference_attn not exists")
+        #     attn_change = False
+        # self.prev_reference_attn = reference_attn
 
+        # print("attn_change:", attn_change)
+        
         if reference_attn:
             attn_modules = [module for module in torch_dfs(self.unet) if isinstance(module, BasicTransformerBlock)]
             attn_modules = sorted(attn_modules, key=lambda x: -x.norm1.normalized_shape[0])
@@ -848,7 +857,7 @@ class LatentConsistencyModelPipeline_reference(DiffusionPipeline):
                 latent_model_input = latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 noise = randn_tensor(
-                    ref_image_latents.shape, generator=None, device=device, dtype=ref_image_latents.dtype
+                    ref_image_latents.shape, generator=generator, device=device, dtype=ref_image_latents.dtype
                 )
                 ref_xt = self.scheduler.add_noise(
                     ref_image_latents,
@@ -881,7 +890,7 @@ class LatentConsistencyModelPipeline_reference(DiffusionPipeline):
                 )[0]
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents, denoised = self.scheduler.step(model_pred, i, t, latents, return_dict=False)
+                latents, denoised = self.scheduler.step(model_pred, i, t, latents, return_dict=False, generator=generator)
 
                 # # call the callback, if provided
                 # if i == len(timesteps) - 1:

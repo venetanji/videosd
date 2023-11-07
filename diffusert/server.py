@@ -109,7 +109,7 @@ class VideoSDTrack(MediaStreamTrack):
         print(self.options)
         torch.cuda.synchronize(gpu)
         #print("options in diffuse", self.options)
-        #ref_frame.save('ref_frame.png')
+        #self.ref_frame.save('ref_frame.png')
         img = pipelines[gpu].infer(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
             seed=self.options['seed'],
@@ -127,6 +127,8 @@ class VideoSDTrack(MediaStreamTrack):
         # check if no other process is setting the frame and acquire lock
         self.generating[gpu] = False
         self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
+        if not self.options['ref']:
+            self.ref_frame = img
         with lock:
             self.current_frame = VideoFrame.from_image(img)
 
@@ -136,9 +138,9 @@ class VideoSDTrack(MediaStreamTrack):
             if not self.generating[gpu]:
                 if not self.current_frame:
                     self.current_frame = frame
-                    self.ref_frame = frame
-                if gpu == 0:
-                    self.ref_frame = self.current_frame.to_image()
+                    self.ref_frame = frame.to_image()
+                # if gpu == 0:
+                #     self.ref_frame = self.current_frame.to_image()
 
                 if time.time() - np.max(self.last_gen_start) < self.avg_gen_time/gpu_num: break
                 self.generating[gpu] = True
@@ -195,8 +197,9 @@ async def offer(request):
                     message['ref'] = bool(message['ref'])
                 if 'controlnet' in message:
                     message['controlnet'] = bool(message['controlnet']) 
-                # if 'set_ref' in message:
-                #     tracks['video'].ref_frame = tracks['video'].current_frame
+                if 'set_ref' in message:
+                    tracks['video'].ref_frame = tracks['video'].current_frame.to_image()
+                    
                     #print("set ref bool in on message", message['set_ref'])
 
 

@@ -142,7 +142,7 @@
         }
 
         set_reference.onclick = function() {
-            promptdc.send(JSON.stringify({set_ref: set_reference.checked}))
+            promptdc.send(JSON.stringify({set_ref: true}))
         }
 
         style_fidelity.oninput = function() {

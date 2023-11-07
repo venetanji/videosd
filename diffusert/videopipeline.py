@@ -183,12 +183,13 @@ class VideoSDPipeline:
             ref_image=ref_frame,
             style_fidelity=style_fidelity,
             generator=self.generator,
-            strength=strength
+            strength=strength,
+            reference_attn=controlnet,
+            reference_adain=controlnet
         )
         
         torch.cuda.set_device(self.device)
         torch.cuda.synchronize(self.device)
-        torch.cuda.manual_seed(seed)
 
         if hasattr(self, "compiled_model"):
             return self.compiled_model(**kwarg_inputs).images[0]
