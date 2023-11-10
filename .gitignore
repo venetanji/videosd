@@ -3,6 +3,7 @@ diffusert/engine
 diffusert/onnx
 diffusert/__pycache__
 diffusert/output
+certbot/
 /wg
 
 #ignore all pycache anywhere

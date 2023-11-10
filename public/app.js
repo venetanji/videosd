@@ -68,13 +68,12 @@
                 if (pc.iceGatheringState === 'complete') {
                     resolve();
                 } else {
-                    function checkState() {
-                        if (pc.iceGatheringState === 'complete') {
-                            pc.removeEventListener('icegatheringstatechange', checkState);
+                    pc.addEventListener('icecandidate', function(event) {
+                        console.log(event.candidate)
+                        if (event.candidate && event.candidate.type === 'relay') {
                             resolve();
                         }
-                    }
-                    pc.addEventListener('icegatheringstatechange', checkState);
+                    })
                 }
             });
         }).then(function() {
@@ -117,7 +116,10 @@
             sdpSemantics: 'unified-plan'
         };
 
-        //config.iceServers = [{urls: ['stun:stun.l.google.com:19302']}];
+    
+        config.iceTransportPolicy = 'relay'
+
+        config.iceServers = [{urls: ['turn:blendotron.art:51820?transport=udp'], username:'videosd',credential:'videosd'}];
         
         pc = new RTCPeerConnection(config);
 
@@ -126,19 +128,22 @@
           promptdc.send(JSON.stringify({prompt: promptelement.value}))
         };
         strength.oninput = function() {
-          promptdc.send(JSON.stringify({strength: strength.value}))
+            document.getElementById("strengthval").innerHTML = strength.value;
+            promptdc.send(JSON.stringify({strength: strength.value}))
         }
         guidance_scale.oninput = function() {
+            document.getElementById("guidance_scaleval").innerHTML = guidance_scale.value;
             promptdc.send(JSON.stringify({guidance_scale: guidance_scale.value}))
           }
         steps.oninput = function() {
+            document.getElementById("stepval").innerHTML = steps.value;
             promptdc.send(JSON.stringify({steps: steps.value}))
         }
         seed.oninput = function() {
             promptdc.send(JSON.stringify({seed: seed.value}))
         }
         reference.oninput = function() {
-            promptdc.send(JSON.stringify({ref: reference.value}))
+            promptdc.send(JSON.stringify({ref: reference.checked}))
         }
 
         set_reference.onclick = function() {
@@ -177,6 +182,7 @@
         stream.getTracks().forEach(function(track) {
           pc.addTrack(track, stream);
         });
+
         negotiate();
 
     }

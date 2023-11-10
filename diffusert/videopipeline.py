@@ -1,23 +1,20 @@
 import numpy as np
 import time
 import torch
-import cv2
-from sfast.compilers.stable_diffusion_pipeline_compiler import compile, CompilationConfig
-#from diffusers import DiffusionPipeline, ControlNetModel
-import packaging.version
+
 #from .lcm.lcm_pipeline import LatentConsistencyModelPipeline
 #from lcm.lcm_i2i_pipeline import LatentConsistencyModelImg2ImgPipeline
 from lcm.lcm_reference_pipeline import LatentConsistencyModelPipeline_reference, LCMScheduler_X
 from diffusers import AutoencoderKL, UNet2DConditionModel
-#from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from transformers import CLIPTokenizer, CLIPTextModel, CLIPImageProcessor
-
-
+from lcm.lcm_controlnet import LatentConsistencyModelPipeline_controlnet
+from lcm.canny_gpu import SobelOperator 
+from diffusers import AutoencoderTiny, ControlNetModel
+import ray
 from PIL import Image
 
-if packaging.version.parse(torch.__version__) >= packaging.version.parse('1.12.0'):
-    torch.backends.cuda.matmul.allow_tf32 = True
 
+@ray.remote(num_gpus=1)
 class VideoSDPipeline:
     """
     Application showcasing the acceleration of Stable Diffusion Txt2Img v1.4, v1.5, v2.0, v2.0-base, v2.1, v2.1-base pipeline using NVidia TensorRT w/ Plugins.
@@ -26,7 +23,7 @@ class VideoSDPipeline:
         self,
         *args, **kwargs
     ):
-        self.device = kwargs.get("device", "cuda")
+        self.device = kwargs.get("device", 0)
         with torch.cuda.device(self.device):
             try: 
                 self.load_model(kwargs["model"], kwargs["controlnet"])
@@ -35,47 +32,24 @@ class VideoSDPipeline:
                 raise
 
         self.generator = torch.Generator(device=self.device)
+        self.cpu_generator = torch.Generator(device="cpu")
+        self.generator.manual_seed(42)
         self.generator_init_state = self.generator.get_state()
+        self.cpu_generator_init_state = self.cpu_generator.get_state()
 
 
     def compile_model(self):
-        torch.set_grad_enabled(False)
-        #torch.set_float32_matmul_precision("medium")
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
 
-        self.model.text_encoder = torch.compile(self.model.text_encoder, mode='max-autotune')
-        self.model.tokenizer = torch.compile(self.model.tokenizer, mode='max-autotune')
-        self.model.unet = torch.compile(self.model.unet, mode='max-autotune')
-        self.model.vae = torch.compile(self.model.vae, mode='max-autotune')
-
-        # config = CompilationConfig.Default()
-        # config.enable_xformers = True
-        # config.enable_triton = True
-        # config.enable_cuda_graph = True
-        # self.compiled_model = compile(self.model, config)
-
-        # # create a dummy noisy image 640x360
-        image = Image.fromarray(np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8))
-
-        canny_image = self.get_canny_filter(np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8), low_threshold=100, high_threshold=200)
-        
-        kwarg_inputs = dict(
-            prompt='a dog',
-            height=360,
-            width=640,
-            num_inference_steps=4,
-            strength=0.4,
-            image=image,
-
-            control_image=canny_image,
-            num_images_per_prompt=1
-        
-            )
-        
         torch.cuda.set_device(self.device)
         torch.cuda.synchronize(self.device)
+        self.model.unet = torch.compile(self.model.unet, mode="reduce-overhead", fullgraph=True)
+        self.model.vae = torch.compile(self.model.vae, mode="reduce-overhead", fullgraph=True)
+
+        kwarg_inputs = dict(
+            prompt="warmup",
+            image=[Image.new("RGB", (768, 768))],
+            control_image=[Image.new("RGB", (768, 768))],
+        )
         return self.model(**kwarg_inputs).images[0]
 
     def load_model(self, model_name, controlnet_model="lllyasviel/sd-controlnet-canny"):
@@ -87,41 +61,33 @@ class VideoSDPipeline:
         #         pretrained_model_name_or_path="SimianLuo/LCM_Dreamshaper_v7",
         #         safety_checker=None
         #     )
+
+        controlnet_canny = ControlNetModel.from_pretrained(
+            "lllyasviel/control_v11p_sd15_canny", torch_dtype=torch.float16
+        ).to(self.device)
+
+        self.canny_torch = SobelOperator(device=self.device)
+
         model_id = "SimianLuo/LCM_Dreamshaper_v7"
 
-        # Initalize Diffusers Model:
-        vae = AutoencoderKL.from_pretrained(model_id, subfolder="vae")
-        text_encoder = CLIPTextModel.from_pretrained(model_id, subfolder="text_encoder")
-        tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer")
-        unet = UNet2DConditionModel.from_pretrained(model_id, subfolder="unet", device_map=None, low_cpu_mem_usage=False, local_files_only=True)
-        #safety_checker = StableDiffusionSafetyChecker.from_pretrained(model_id, subfolder="safety_checker")
-        feature_extractor = CLIPImageProcessor.from_pretrained(model_id, subfolder="feature_extractor")
-        scheduler = LCMScheduler_X(beta_start=0.00085, beta_end=0.0120, beta_schedule="scaled_linear", prediction_type="epsilon")
+        self.model = LatentConsistencyModelPipeline_controlnet.from_pretrained(
+            model_id,
+            safety_checker=None,
+            controlnet=controlnet_canny,
+            torch_dtype=torch.float16,
+            scheduler=None,
+        )
 
-        self.model = LatentConsistencyModelPipeline_reference(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=None, feature_extractor=feature_extractor)
-        self.model.safety_checker = None
+        self.model.vae = AutoencoderTiny.from_pretrained(
+            "madebyollin/taesd", torch_dtype=torch.float16, use_safetensors=True
+        )
+
+        # self.model = LatentConsistencyModelPipeline_reference(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=None, feature_extractor=feature_extractor)
+        # self.model.safety_checker = None
         self.model.to(torch.device(self.device))
+        self.model.unet.to(memory_format=torch.channels_last)
         return self.model
     
-    def get_canny_filter(self, image, low_threshold=100, high_threshold=200):
-        image = cv2.Canny(image, low_threshold, high_threshold)
-        image = image[:, :, None]
-        image = np.concatenate([image, image, image], axis=2)
-        return Image.fromarray(image)
-
-    def get_color_filter(self, cond_image, mask_size=64):
-        H, W = cond_image.shape[:2]
-        cond_image = cv2.resize(cond_image, (W // mask_size, H // mask_size), interpolation=cv2.INTER_CUBIC)
-        color = cv2.resize(cond_image, (W, H), interpolation=cv2.INTER_NEAREST)
-        return color
-
-    def get_colorcanny(self, image, mask_size):
-        canny_img = self.get_canny_filter(image)
-
-        color_img = self.get_color_filter(image, int(mask_size))
-
-        color_img[np.where(canny_img > 128)] = 255
-        return color_img
 
     def infer(
         self,
@@ -168,10 +134,13 @@ class VideoSDPipeline:
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
         #canny_image = np.array(img)
-        #canny_image = self.get_canny_filter(canny_image)
-        self.generator.manual_seed(seed)  
+        canny_image = self.canny_torch(img, 0.31, 0.8)
         self.generator.set_state(self.generator_init_state)
+        self.generator.manual_seed(seed) 
         np.random.seed(seed)
+        #with torch.device(self.device):
+        
+        #    torch.cuda.manual_seed(seed)
 
         kwarg_inputs = dict(
             prompt=prompt,
@@ -180,18 +149,17 @@ class VideoSDPipeline:
             width=image_width,
             num_inference_steps=num_of_infer_steps,
             image=img,
-            ref_image=ref_frame,
-            style_fidelity=style_fidelity,
+            control_image=canny_image,
+            #ref_image=ref_frame,
+            #style_fidelity=style_fidelity,
+            controlnet_conditioning_scale=style_fidelity,
             generator=self.generator,
-            strength=strength,
-            reference_attn=controlnet,
-            reference_adain=controlnet
+            strength=strength
         )
         
         torch.cuda.set_device(self.device)
         torch.cuda.synchronize(self.device)
 
-        if hasattr(self, "compiled_model"):
-            return self.compiled_model(**kwarg_inputs).images[0]
-        else:
-            return self.model(**kwarg_inputs).images[0]
+        torch.manual_seed(seed).set_state(self.cpu_generator_init_state)
+        
+        return self.model(**kwarg_inputs).images[0]

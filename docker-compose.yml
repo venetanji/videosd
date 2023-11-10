@@ -25,13 +25,24 @@ services:
     profiles:
       - speech
 
+  certbot:
+    image: certbot/certbot:latest
+    profiles:
+      - letsencrypt
+    volumes:
+      - ./certbot/www/:/var/www/certbot/:rw
+      - ./certbot/conf/:/etc/letsencrypt/:rw
+
   frontend: &frontend
     image: nginx
     volumes:
       - ./public:/usr/share/nginx/html
       - ./configs/nginx.conf:/etc/nginx/templates/default.conf.template
+      - ./certbot/www/:/var/www/certbot/:ro
+      - ./certbot/conf/:/etc/letsencrypt/:ro
     ports:
       - 80:80
+      - 443:443
     environment:
       - BACKEND_HOST=backend
     profiles:
@@ -49,8 +60,9 @@ services:
     <<: [*x-base,*x-gpu]
     build: .
     entrypoint: "python3 server.py"
-    ports:
-      - 8080:8080
+    shm_size: 50g
+    expose:
+      - 8080
     profiles:
       - production
   
@@ -62,32 +74,13 @@ services:
       - ''
       - dev
 
-  wireguard:
-    image: lscr.io/linuxserver/wireguard:latest
-    container_name: wireguard
-    profiles:
-      - wireguard
-
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE #optional
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
-      - SERVERPORT=51820 #optional
-      - PEERS=2 #optional
-      - PEERDNS=8.8.8.8 #optional
-      - INTERNAL_SUBNET=10.13.13.0 #optional
-      - ALLOWEDIPS=0.0.0.0/0 #optional
-      - PERSISTENTKEEPALIVE_PEERS= #optional
-      - LOG_CONFS=true #optional
+  coturn:
+    image: coturn/coturn
+    network_mode: host
     volumes:
-
-      - ./wg/config:/config
-      - /lib/modules:/lib/modules #optional
-    ports:
-      - 51820:51820/udp
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    restart: unless-stopped
+      - ./configs/turnserver.conf:/etc/coturn/turnserver.conf
+    environment:
+      - DETECT_EXTERNAL_IP=no
+      - DETECT_RELAY_IP=no
+      - DETECT_EXTERNAL_IPV6=no
+      - DETECT_RELAY_IPV6=no

@@ -8,10 +8,9 @@ import ssl
 import uuid
 import yaml
 import torch
-import random
+import sys
 from scipy import io as sio
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor
 
 import time
 #import whisper 
@@ -21,19 +20,13 @@ from aiohttp import web, ClientSession
 import aiohttp_cors
 from av import VideoFrame, AudioFifo
 
-from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
+from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
-from threading import  Lock
-import concurrent.futures
-ROOT = os.path.dirname(__file__)
 
 logger = logging.getLogger("pc")
 pcs = set()
 relay = MediaRelay()
 bh = MediaBlackhole()
-global lock
-lock = Lock()
-pool = ThreadPoolExecutor()
 
 class STTTrack(MediaStreamTrack):
     """
@@ -105,12 +98,12 @@ class VideoSDTrack(MediaStreamTrack):
         self.ref_frame = None
         self.gen_task = None
     
-    def diffuse(self,frame,gpu=0):
-        print(self.options)
+    async def diffuse(self,frame,gpu=0):
+        #print(self.options)
         torch.cuda.synchronize(gpu)
         #print("options in diffuse", self.options)
         #self.ref_frame.save('ref_frame.png')
-        img = pipelines[gpu].infer(frame.to_image(),[self.options['prompt']],
+        img = await pipelines[gpu].infer.remote(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
             seed=self.options['seed'],
             num_of_infer_steps = self.options['steps'],
@@ -126,11 +119,11 @@ class VideoSDTrack(MediaStreamTrack):
 
         # check if no other process is setting the frame and acquire lock
         self.generating[gpu] = False
-        self.avg_gen_time = 0.5*self.avg_gen_time + 0.5*(time.time() - self.last_gen_start[gpu])
-        if not self.options['ref']:
+        self.avg_gen_time = 0.95*self.avg_gen_time + 0.05*(time.time() - self.last_gen_start[gpu])
+        sys.stdout.write("\rAverage gentime %f" % self.avg_gen_time)
+        if self.options['ref']:
             self.ref_frame = img
-        with lock:
-            self.current_frame = VideoFrame.from_image(img)
+        self.current_frame = VideoFrame.from_image(img)
 
     async def recv(self):
         frame = await self.track.recv()
@@ -144,25 +137,31 @@ class VideoSDTrack(MediaStreamTrack):
 
                 if time.time() - np.max(self.last_gen_start) < self.avg_gen_time/gpu_num: break
                 self.generating[gpu] = True
-                print(self.generating)
+                #print(self.generating)
                 self.last_gen_start[gpu] = time.time()
                 if not self.current_frame:
                     self.current_frame = frame
                 #print("Generating on GPU ", gpu)
-                asyncio.get_running_loop().run_in_executor(pool, self.diffuse,frame,gpu)
+                asyncio.create_task(self.diffuse(frame,gpu))
                 break
 
-        with lock:
-            outframe = VideoFrame.from_image(self.current_frame.to_image().resize((640, 360), resample=Image.Resampling.LANCZOS))
-            outframe.pts = frame.pts
-            outframe.time_base = frame.time_base
+        #with lock:
+        outframe = VideoFrame.from_image(self.current_frame.to_image().resize((640, 360), resample=Image.Resampling.LANCZOS))
+        outframe.pts = frame.pts
+        outframe.time_base = frame.time_base
         return outframe
 
 async def offer(request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    stun = RTCIceServer(urls=["stun:stun.l.google.com:19302"])
+    turn = RTCIceServer(urls=["turn:blendotron.art:51820"], credential="blendotron", username="blendotron")
+    #turn = RTCIceServer(urls=["turn:a.relay.metered.ca:80"], credential="atSDieSBXROzbCCv", username="eab31faae94c18adf25907a2")
 
-    pc = RTCPeerConnection()
+
+    config = RTCConfiguration(iceServers=[turn])
+
+    pc = RTCPeerConnection(configuration=config)
     pc_id = "PeerConnection(%s)" % uuid.uuid4()
     pcs.add(pc)
 
@@ -194,6 +193,7 @@ async def offer(request):
                 if 'seed' in message:
                     message['seed'] = int(message['seed'])
                 if 'ref' in message:
+                    print(message['ref'])
                     message['ref'] = bool(message['ref'])
                 if 'controlnet' in message:
                     message['controlnet'] = bool(message['controlnet']) 
@@ -316,12 +316,14 @@ if __name__ == "__main__":
     
     # load trt model into every gpus
     # TODO make this async and return when all models are loaded
-
+    
+    
     for i in range(gpu_num):
-        config['device'] = i
-        pipelines[i] = VideoSDPipeline(**config)
-        if config['compile']:
-            pipelines[i].compile_model()
+        #config['device'] = i
+        pipelines[i] = VideoSDPipeline.remote(**config)
+        # pipelines[i] = VideoSDPipeline(**config)
+        # if config['compile']:
+        #     pipelines[i].compile_model()
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context

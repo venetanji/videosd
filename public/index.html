@@ -63,9 +63,9 @@
                         <div class="accordion-body">
                     
 
-                          <div><label for="steps">Steps</label><input type="range" class="form-range" min="1" max="70" step ="1" value="4" id="steps" name="steps"></div>
-                          <div><label for="strength">Strength</label><input type="range" class="form-range" min="0.05" max="1" step ="0.025" value="0.9" id="strength"></div>
-                          <div><label for="guidance_scale">Follow prompt</label><input type="range" class="form-range" min="1.025" max="15" step ="0.025" value="7.5" id="guidance_scale"></div>
+                          <div><label for="steps">Steps: <span id="stepval" class="fw-bold">2</span></label><input type="range" class="form-range" min="1" max="8" step ="1" value="2" id="steps" name="steps"></div>
+                          <div><label for="strength">Strength: <span id="strengthval" class="fw-bold">0.5</span></label><input type="range" class="form-range" min="0.05" max="1" step ="0.025" value="0.5" id="strength"></div>
+                          <div><label for="guidance_scale">Follow prompt <span id="guidance_scaleval" class="fw-bold">7.5</span></label><input type="range" class="form-range" min="1.025" max="15" step ="0.025" value="7.5" id="guidance_scale"></div>
                           <label for="seed">Seed</label>
                           <div class="input-group mb-1">
                               <input id="seed" class="form-control" type="text" placeholder="Seed" value="42">
