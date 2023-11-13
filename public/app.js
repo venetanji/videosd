@@ -88,7 +88,9 @@
               "seed": parseInt(seed.value),
               "style_fidelity": 0.5,
               "ref": reference.checked,
-              "controlnet": controlnet.checked
+              "controlnet": controlnet.checked,
+              "width": 640,
+              "height": 480,
             }
            
             return fetch('/offer', {

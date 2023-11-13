@@ -93,15 +93,14 @@ class VideoSDTrack(MediaStreamTrack):
         self.last_gen_frame = time.time()
         self.avg_gen_time = 0.4
         #initialize the frame as black empty
-        self.img = Image.new('RGB', (1280,720), (0, 0, 0))
         self.current_frame = None
         self.ref_frame = None
         self.gen_task = None
     
     async def diffuse(self,frame,gpu=0):
-        #print(self.options)
-        torch.cuda.synchronize(gpu)
-        #print("options in diffuse", self.options)
+
+        #frame.to_image().save('frame.png')
+        #print("Frame size: ", frame.to_image().size)
         #self.ref_frame.save('ref_frame.png')
         img = await pipelines[gpu].infer.remote(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
@@ -112,12 +111,10 @@ class VideoSDTrack(MediaStreamTrack):
             ref_frame = self.ref_frame,
             style_fidelity = self.options['style_fidelity'],
             controlnet = self.options['controlnet'],
+            width = self.options['width'],
+            height = self.options['height']
         )
 
-        #print("Average gen time:", self.avg_gen_time)
-        #self.img.paste(img,((gpu//2)*img.width,(gpu%2)*img.height))
-
-        # check if no other process is setting the frame and acquire lock
         self.generating[gpu] = False
         self.avg_gen_time = 0.95*self.avg_gen_time + 0.05*(time.time() - self.last_gen_start[gpu])
         sys.stdout.write("\rAverage gentime %f" % self.avg_gen_time)
@@ -146,7 +143,7 @@ class VideoSDTrack(MediaStreamTrack):
                 break
 
         #with lock:
-        outframe = VideoFrame.from_image(self.current_frame.to_image().resize((640, 360), resample=Image.Resampling.LANCZOS))
+        outframe = VideoFrame.from_image(self.current_frame.to_image())
         outframe.pts = frame.pts
         outframe.time_base = frame.time_base
         return outframe
@@ -154,10 +151,7 @@ class VideoSDTrack(MediaStreamTrack):
 async def offer(request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
-    stun = RTCIceServer(urls=["stun:stun.l.google.com:19302"])
     turn = RTCIceServer(urls=["turn:blendotron.art:51820"], credential="blendotron", username="blendotron")
-    #turn = RTCIceServer(urls=["turn:a.relay.metered.ca:80"], credential="atSDieSBXROzbCCv", username="eab31faae94c18adf25907a2")
-
 
     config = RTCConfiguration(iceServers=[turn])
 
