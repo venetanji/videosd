@@ -94,8 +94,8 @@ class VideoSDPipeline:
         img,
         prompt,
         negative_prompt=["deformed iris, deformed pupils, semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime, mutated hands and fingers, deformed, distorted, disfigured, poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, disconnected limbs, mutation, mutated, ugly, disgusting, amputation"],
-        image_height=360,
-        image_width=640,
+        height=360,
+        width=640,
         strength=0.4,
         num_of_infer_steps=20,  
         guidance_scale=7.5,
@@ -129,8 +129,27 @@ class VideoSDPipeline:
                 Verbose in logging
         """
         assert len(prompt) == len(negative_prompt)
-        img = img.resize((640, 360), resample=Image.Resampling.LANCZOS)
-        ref_frame = ref_frame.resize((640, 360), resample=Image.Resampling.LANCZOS)
+        # if image width and height don't match
+
+
+        # center crop image to match desired aspect ratio
+        if img.width / img.height > width / height:
+            # crop width
+            new_width = img.height * (width / height)
+            left = (img.width - new_width) / 2
+            top = 0
+            right = (img.width + new_width) / 2
+            bottom = img.height
+        else:
+            # crop height
+            new_height = img.width * (height / width)
+            left = 0
+            top = (img.height - new_height) / 2
+            right = img.width
+            bottom = (img.height + new_height) / 2
+        img = img.crop((left, top, right, bottom))
+        img = img.resize((width, height), resample=Image.Resampling.LANCZOS)
+        #ref_frame = ref_frame.resize((width, height), resample=Image.Resampling.LANCZOS)
         assert guidance_scale > 1.0
         self.guidance_scale = guidance_scale
         #canny_image = np.array(img)
@@ -138,15 +157,12 @@ class VideoSDPipeline:
         self.generator.set_state(self.generator_init_state)
         self.generator.manual_seed(seed) 
         np.random.seed(seed)
-        #with torch.device(self.device):
-        
-        #    torch.cuda.manual_seed(seed)
 
         kwarg_inputs = dict(
             prompt=prompt,
             #negative_prompt=negative_prompt,
-            height=image_height,
-            width=image_width,
+            height=height,
+            width=width,
             num_inference_steps=num_of_infer_steps,
             image=img,
             control_image=canny_image,
