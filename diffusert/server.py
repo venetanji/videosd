@@ -88,7 +88,6 @@ class VideoSDTrack(MediaStreamTrack):
         super().__init__()  # don't forget this!
         self.track = track
         self.options = options
-        self.generating = [False for i in range(gpu_num)]
         self.last_gen_start = [time.time() for i in range(gpu_num)]
         self.last_gen_frame = time.time()
         self.avg_gen_time = 0.4
@@ -102,6 +101,9 @@ class VideoSDTrack(MediaStreamTrack):
         #frame.to_image().save('frame.png')
         #print("Frame size: ", frame.to_image().size)
         #self.ref_frame.save('ref_frame.png')
+        
+        #print(self.generating)
+        self.last_gen_start[gpu] = time.time()
         img = await pipelines[gpu].infer.remote(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
             seed=self.options['seed'],
@@ -114,8 +116,7 @@ class VideoSDTrack(MediaStreamTrack):
             width = self.options['width'],
             height = self.options['height']
         )
-
-        self.generating[gpu] = False
+        generating[gpu] = False
         self.avg_gen_time = 0.95*self.avg_gen_time + 0.05*(time.time() - self.last_gen_start[gpu])
         sys.stdout.write("\rAverage gentime %f" % self.avg_gen_time)
         if self.options['ref']:
@@ -124,26 +125,24 @@ class VideoSDTrack(MediaStreamTrack):
 
     async def recv(self):
         frame = await self.track.recv()
+
         for gpu in range(gpu_num):
-            if not self.generating[gpu]:
+            if not generating[gpu]:
                 if not self.current_frame:
                     self.current_frame = frame
                     self.ref_frame = frame.to_image()
-                # if gpu == 0:
-                #     self.ref_frame = self.current_frame.to_image()
 
-                if time.time() - np.max(self.last_gen_start) < self.avg_gen_time/gpu_num: break
-                self.generating[gpu] = True
-                #print(self.generating)
-                self.last_gen_start[gpu] = time.time()
-                if not self.current_frame:
-                    self.current_frame = frame
+                print("sessions", len(pcs))
+
+                if time.time() - np.max(self.last_gen_start) < self.avg_gen_time*len(pcs)/gpu_num: break
+
+                generating[gpu] = True
                 #print("Generating on GPU ", gpu)
                 asyncio.create_task(self.diffuse(frame,gpu))
                 break
 
         #with lock:
-        outframe = VideoFrame.from_image(self.current_frame.to_image())
+        outframe = self.current_frame
         outframe.pts = frame.pts
         outframe.time_base = frame.time_base
         return outframe
@@ -221,9 +220,13 @@ async def offer(request):
     async def on_connectionstatechange():
         log_info("Connection state is %s", pc.connectionState)
         if pc.connectionState == "failed":
-            await pc.close()
             pcs.discard(pc)
-
+            await pc.close()  
+        if pc.connectionState == "closed":
+            pcs.discard(pc)
+            await pc.close()
+            await bh.stop()
+            
     @pc.on("track")
     def on_track(track):
         log_info("Track %s received", track.kind)
@@ -241,7 +244,10 @@ async def offer(request):
         @track.on("ended")
         async def on_ended():
             log_info("Track %s ended", track.kind)
+            pcs.discard(pc)
             await bh.stop()
+            await pc.close()
+            
 
     # handle offer
     #print(offer)
@@ -269,6 +275,7 @@ async def on_shutdown(app):
 if __name__ == "__main__":
     config = yaml.safe_load(open("config.yaml"))
     gpu_num = config['gpus']
+    generating = [False for i in range(gpu_num)]
 
     parser = argparse.ArgumentParser(
         description="WebRTC audio / video / data-channels demo"

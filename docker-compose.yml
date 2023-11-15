@@ -33,10 +33,19 @@ services:
       - ./certbot/www/:/var/www/certbot/:rw
       - ./certbot/conf/:/etc/letsencrypt/:rw
 
+  frontend-build:
+    image: node:21-alpine
+    working_dir: /app
+    volumes:
+      - ./client:/app
+    command: "sleep infinity"
+    profiles:
+      - build
+
   frontend: &frontend
     image: nginx
     volumes:
-      - ./public:/usr/share/nginx/html
+      - ./client/out/:/usr/share/nginx/html
       - ./configs/nginx.conf:/etc/nginx/templates/default.conf.template
       - ./certbot/www/:/var/www/certbot/:ro
       - ./certbot/conf/:/etc/letsencrypt/:ro

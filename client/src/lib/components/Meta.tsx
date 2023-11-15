@@ -1,4 +1,4 @@
-const APP_NAME = 'nextarter-chakra';
+const APP_NAME = 'VideoSD - Blendotron.art';
 
 const Meta = () => {
   return (
