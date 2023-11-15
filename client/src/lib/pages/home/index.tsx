@@ -35,7 +35,7 @@ let initOptions = {
   "prompt": "Underwater",
   "strength": 0.4,
   "guidance_scale": 5,
-  "steps": 2,
+  "steps": 4,
   "seed": 23,
   "ref": false,
   "style_fidelity": 1,
@@ -286,36 +286,25 @@ const Home = () => {
                     ))}
                   </Select>
 
-
                   <Box mb={1}>
                     <Textarea isDisabled={!isStreaming} fontSize={["2xs","initial"]} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
                   </Box>
 
-                
                   <SliderParameter label="steps" isDisabled={!isStreaming} min={1} max={12} step={1} defaultValue={options.steps} onChange={(val) => handleChange("steps", val)}>
                     Steps: {options.steps}
-                  </SliderParameter>
-
-                  <SliderParameter label="CFG" isDisabled={!isStreaming} min={1} max={20} step={0.25} defaultValue={options.guidance_scale} onChange={(val) => handleChange("guidance_scale", val)}>
-                    CFG: {options.guidance_scale}
                   </SliderParameter>
 
                   <SliderParameter label="strength" isDisabled={!isStreaming} min={0} max={1} step={0.02} defaultValue={options.strength} onChange={(val) => handleChange("strength", val)}>
                     Strength: {options.strength}
                   </SliderParameter>
 
-                  <Flex w="full" my={[1,2]} direction={"row"} alignContent={"flex-start"} alignItems={"center"}>
-                  <FormLabel fontSize={['2xs','inherit']} mb={0} mr={1}>Seed:</FormLabel>
-                  
-                  <ButtonGroup size='sm' isAttached variant='outline'>
+                    <FormLabel fontSize={['2xs','initial']} mb={0}>Seed:</FormLabel>
                     
-                    <Input size={['xs','sm']} width={32} placeholder="Seed" isDisabled={!isStreaming} onChange={(val) => handleChange("seed", val.target.value) } value={options.seed}/>
+                    <Input size={['xs','sm']} placeholder="Seed" isDisabled={!isStreaming} onChange={(val) => handleChange("seed", val.target.value) } value={options.seed}/>
                     
-                    <Button ml={2} aria-label="Randomize" size={['xs','sm']} isDisabled={!isStreaming} onClick={() => handleChange("seed", Math.floor(Math.random() * 100000000))} leftIcon={<FaDice/>}> 
+                    <Button aria-label="Randomize" size={['xs','sm']} isDisabled={!isStreaming} onClick={() => handleChange("seed", Math.floor(Math.random() * 100000000))} leftIcon={<FaDice/>}> 
                       Randomize
                     </Button>
-                  </ButtonGroup>
-                  </Flex>
                 </VStack>
               </FormControl>
             </GridItem>
@@ -323,8 +312,6 @@ const Home = () => {
 
           </SimpleGrid>
       </Flex>
-      
-
     </FullScreen>
 
   );
