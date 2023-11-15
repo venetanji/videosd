@@ -258,12 +258,12 @@ const Home = () => {
         h="full"
       >
           <AspectRatio minW={['full', '79vw']} maxH={["80vh","90vh"]} ratio={[portraitRatio,16/9]}>
-            <video ref={remoteVideoRef} autoPlay  />
+            <video ref={remoteVideoRef} autoPlay playsInline />
           </AspectRatio>
           <SimpleGrid columns={4} spacing={3} minH={0} minW={['full', '20vw', '20vw']}  ml={[2,0]} p={[1,2]}>
             <GridItem order={[1,0]} colSpan={[1,4]}>
               <AspectRatio ratio={[portraitRatio,16/9]}>
-                <video ref={localVideoRef} autoPlay />
+                <video ref={localVideoRef} autoPlay playsInline />
               </AspectRatio>
               
               {hasMultipleCameras && (

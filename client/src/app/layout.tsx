@@ -7,11 +7,11 @@ type RootLayoutProps = {
   children: React.ReactNode;
 };
 
-const APP_NAME = 'nextarter-chakra';
+const APP_NAME = 'VideoSD - Blendotron.art';
 
 export const metadata: Metadata = {
-  title: { default: APP_NAME, template: '%s | nextarter-chakra' },
-  description: 'Next.js + chakra-ui + TypeScript template',
+  title: { default: APP_NAME, template: '%s' },
+  description: 'StableDiffusion over webRTC',
   applicationName: APP_NAME,
   appleWebApp: {
     capable: true,
@@ -22,16 +22,16 @@ export const metadata: Metadata = {
     telephone: false,
   },
   openGraph: {
-    url: 'https://nextarter-chakra.sznm.dev',
-    title: 'nextarter-chakra',
-    description: 'Next.js + chakra-ui + TypeScript template',
+    url: 'https://blendotron.art',
+    title: 'blendotron.art',
+    description: 'StableDiffusion over webRTC',
     images: {
       url: 'https://og-image.sznm.dev/**nextarter-chakra**.sznm.dev.png?theme=dark&md=1&fontSize=125px&images=https%3A%2F%2Fsznm.dev%2Favataaars.svg&widths=250',
       alt: 'nextarter-chakra.sznm.dev og-image',
     },
   },
   twitter: {
-    creator: '@sozonome',
+    creator: '@venetanji',
     card: 'summary_large_image',
   },
 };
