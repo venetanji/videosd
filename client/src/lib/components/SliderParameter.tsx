@@ -33,7 +33,7 @@ export default function SliderParameter({
     return (
         <Box px={[1,0]}>
         <Flex justify="space-between" align={["left","right"]} mb={1} direction={["row","column"]}>
-        <FormLabel py={1} pl={[3,0]} mb={0} order={[1,0]} fontSize={['2xs','inherit']} minW={[20,0]}>{children}</FormLabel>
+        <FormLabel py={1} pl={[3,0]} mb={0} order={[1,0]} fontSize={['xs','inherit']} minW={[28,0]}>{children}</FormLabel>
         <Slider order={[0,1]} aria-label={label} isDisabled={isDisabled} defaultValue={defaultValue} min={min} max={max} step={step} onChange={handleChange}>
             <SliderTrack>
                 <SliderFilledTrack />

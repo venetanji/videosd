@@ -1,10 +1,9 @@
 'use client';
 
-import { Flex, Box, AspectRatio, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer } from '@chakra-ui/react';
+import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer } from '@chakra-ui/react';
 import { Html } from 'next/document';
 import { userAgentFromString } from 'next/server';
 import React, { useState, useRef, useEffect, useCallback, useMemo, use, ChangeEvent } from 'react';
-import { FullScreen, useFullScreenHandle } from "react-full-screen";
 import { useOrientation } from "@uidotdev/usehooks";
 import {
   Slider,
@@ -32,7 +31,7 @@ const pc_config = {
 };
 
 let initOptions = {
-  "prompt": "Underwater",
+  "prompt": "Pixar cartoon, cg",
   "strength": 0.4,
   "guidance_scale": 5,
   "steps": 4,
@@ -60,7 +59,8 @@ const Home = () => {
   let facingMode = 'user';
   const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
   let isConnecting = false;
-  // store options as object
+  
+  const [previewOpen, setPreviewOpen] = useState(true);
   
 
   let [options, setOptions] = useState(initOptions);
@@ -170,7 +170,30 @@ const Home = () => {
     console.log(answer);
   }, [localStreamRef.current]);
 
-  const handle = useFullScreenHandle();
+  const [isFull, setIsFull] = useState(false);
+  const fsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!fsRef.current) return;
+    if (isFull) {
+      fsRef.current.requestFullscreen();
+    } else if (document.fullscreenElement != null) {
+      document.exitFullscreen();
+    }
+  }, [isFull]);
+
+  const handleFullscreenChange = useCallback(() => {
+    document.fullscreenElement != null ? setIsFull(true) : setIsFull(false);
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    }
+  },[]);
+
+
 
   const updateInitOptions = () => {
     if (!remoteVideoRef.current) return;
@@ -214,15 +237,6 @@ const Home = () => {
     }
   }, [facingMode]);
 
-  const orientationChange = useCallback(() => {
-    console.log(orientation);
-    return orientation;
-  }, [orientation]);
-
-  useEffect(() => {
-    console.log(orientationChange())
-  }, [orientationChange]);
-
   const handleChange = (name: string, value: any) => {
     setOptions(prevState => ({
         ...prevState,
@@ -235,61 +249,89 @@ const Home = () => {
           dcRef.current.send(JSON.stringify({[name]: value}));
   };
 
+  useEffect(() => {
+    const cleanup = () => {
+      if (!pcRef.current) return;
+      pcRef.current?.getSenders().forEach((sender) => {
+        sender.track?.stop();
+      });
+      pcRef.current?.close();
+    }
+  
+    window.addEventListener('beforeunload', cleanup);
+  
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+    }
+  }, []);
+
   const flipCamera = (e: ChangeEvent) => {
     if (facingMode == 'environment') {
       facingMode = 'user';
     } else {
       facingMode = 'environment';
     }
-    console.log("flping camera", facingMode)
+    console.log("flipping camera", facingMode)
     getLocalStream();
   };
+
+  const setWindowDimensions = useCallback(() => {
+    if (!remoteVideoRef.current) return;
+    handleChange("width", remoteVideoRef.current.offsetWidth);
+    handleChange("height", remoteVideoRef.current.offsetHeight);
+    console.log(remoteVideoRef.current.offsetHeight)
+  },[handleChange])
+
+  useEffect(() => {
+    window.addEventListener('resize', setWindowDimensions);
+    return () => {
+      window.removeEventListener('resize', setWindowDimensions)
+    }
+  }, [])
   
-  const portraitRatio = 9/12
 
   return (
-    <FullScreen handle={handle}>
+
+
+    <Box flex={1} h={'auto'} ref={fsRef}>
+      
+
       <Flex
-        direction={["column","row","row"]}
-        gap={[3,2]}
-        align={["center","flex-start"]}
-        maxWidth={["full", "full", "full"]}
-        minH='full'
-        h="full"
-      >
-          <AspectRatio minW={['full', '79vw']} maxH={["80vh","90vh"]} ratio={[portraitRatio,16/9]}>
-            <video ref={remoteVideoRef} autoPlay playsInline />
-          </AspectRatio>
-          <SimpleGrid columns={4} spacing={3} minH={0} minW={['full', '20vw', '20vw']}  ml={[2,0]} p={[1,2]}>
-            <GridItem order={[1,0]} colSpan={[1,4]}>
-              <AspectRatio ratio={[portraitRatio,16/9]}>
-                <video ref={localVideoRef} autoPlay playsInline />
-              </AspectRatio>
-              
-              {hasMultipleCameras && (
-                <FormControl display="flex" alignItems="center">
-                  <FormLabel htmlFor="cameras" mb="0" fontSize={['3xs','inherit']}>
-                    Flip Camera
-                  </FormLabel>
-                  <Switch id='cameras' size={['sm','md']} py={2} isDisabled={!hasMultipleCameras} onChange={flipCamera}/>
+        direction={["column","column","row"]}
+        gap={[0,0]}
+        
+        h={'full'}
+        alignItems={["center","center","stretch"]}
+        alignContent={["center","center","stretch"]}
+      >   
+          
+          <Box flex={1} maxH='100vh' width={['full','full','auto']}>
+            <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline /> 
+          </Box>
 
-                </FormControl>
-              )}
-            </GridItem>
+          <Box visibility={previewOpen ? 'visible' : 'hidden'} position={'absolute'} boxShadow='dark-lg' w={['20vw', '10vw']} top={0} left={0} m={2}>
+              <video ref={localVideoRef} autoPlay playsInline />
+          </Box>
 
-            <GridItem colSpan={[3,4]} order={[0,1]}>
-              <FormControl>
-                <VStack w="full" align="left" spacing={[1,2]}>
-                  <Select size={['xs','sm']} placeholder="Example prompts..." isDisabled={!isStreaming} onChange={(val) => handleChange("prompt", val.target.value)}>
-                    {promptExamples.map((prompt) => (
-                      <option key={prompt} value={prompt}>{prompt}</option>
-                    ))}
-                  </Select>
+              <Tabs size={['sm','md']} minH={160} isFitted w={['full','full','auto']}>
+                <TabList>
+                  <Tab>Prompt</Tab>
+                  <Tab>Diffusion</Tab>
+                  <Tab>Settings</Tab>
+                </TabList>
+                <TabPanels>
+                  <TabPanel>
+                    <Select size={['xs','sm']} placeholder="Example prompts..." isDisabled={!isStreaming} onChange={(val) => handleChange("prompt", val.target.value)}>
+                      {promptExamples.map((prompt) => (
+                        <option key={prompt} value={prompt}>{prompt}</option>
+                      ))}
+                    </Select>
 
-                  <Box mb={1}>
-                    <Textarea isDisabled={!isStreaming} fontSize={["2xs","initial"]} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
-                  </Box>
-
+                    <Box mt={1} >
+                      <Textarea minH={16} fontSize={'sm'} isDisabled={!isStreaming} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
+                    </Box>
+                  </TabPanel>
+                  <TabPanel>
                   <SliderParameter label="steps" isDisabled={!isStreaming} min={1} max={12} step={1} defaultValue={options.steps} onChange={(val) => handleChange("steps", val)}>
                     Steps: {options.steps}
                   </SliderParameter>
@@ -297,23 +339,47 @@ const Home = () => {
                   <SliderParameter label="strength" isDisabled={!isStreaming} min={0} max={1} step={0.02} defaultValue={options.strength} onChange={(val) => handleChange("strength", val)}>
                     Strength: {options.strength}
                   </SliderParameter>
-
-                    <FormLabel fontSize={['2xs','initial']} mb={0}>Seed:</FormLabel>
+                  <Flex mt={4} direction="row" align="center" justify="left" width="full">
+                    <FormLabel fontSize={['xs','initial']} mb={0}>Seed:</FormLabel>
                     
-                    <Input size={['xs','sm']} placeholder="Seed" isDisabled={!isStreaming} onChange={(val) => handleChange("seed", val.target.value) } value={options.seed}/>
+                    <Input w={28} size={['xs','sm']} placeholder="Seed" isDisabled={!isStreaming} onChange={(val) => handleChange("seed", val.target.value) } value={options.seed}/>
                     
-                    <Button aria-label="Randomize" size={['xs','sm']} isDisabled={!isStreaming} onClick={() => handleChange("seed", Math.floor(Math.random() * 100000000))} leftIcon={<FaDice/>}> 
-                      Randomize
-                    </Button>
-                </VStack>
-              </FormControl>
-            </GridItem>
+                    <IconButton ml={1} aria-label="Randomize" size={['xs','sm']} isDisabled={!isStreaming} onClick={() => handleChange("seed", Math.floor(Math.random() * 100000000))} icon={<FaDice/>}/>
+                  </Flex>
+                  </TabPanel>
+                  <TabPanel>
+                    <FormControl display="flex" alignItems="center">
+                        <Switch id='preview' isChecked={previewOpen} mr={2} py={1.5} onChange={(e) => setPreviewOpen(e.target.checked)}/>
 
+                        <FormLabel htmlFor="preview" mb="0">
+                          Camera Preview
+                        </FormLabel>
+                    </FormControl>
 
-          </SimpleGrid>
+                    <FormControl display="flex" alignItems="center">
+                        <Switch id='fullscreen' isChecked={isFull} mr={2} py={1.5} onChange={(e) => setIsFull(e.target.checked)} />
+
+                        <FormLabel htmlFor="fullscreen" mb="0">
+                          Fullscreen
+                        </FormLabel>
+                    </FormControl>
+                    
+                    {hasMultipleCameras && (
+                      <FormControl display="flex" alignItems="center">
+                        <Switch id='cameras' py={1.5} mr={2} isDisabled={!hasMultipleCameras} onChange={flipCamera}/>
+
+                        <FormLabel htmlFor="cameras" mb="0">
+                          Flip Camera
+                        </FormLabel>
+                      </FormControl>
+                    )}
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
+
       </Flex>
-    </FullScreen>
-
+    {/*  */}
+    </Box>
   );
 };
 
