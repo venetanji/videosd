@@ -1,6 +1,6 @@
 'use client';
 
-import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer, Skeleton, AbsoluteCenter, useDisclosure, Spinner, Fade } from '@chakra-ui/react';
+import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer, Skeleton, AbsoluteCenter, useDisclosure, Spinner, Fade, useToast } from '@chakra-ui/react';
 import { Html } from 'next/document';
 import { userAgentFromString } from 'next/server';
 import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from 'react';
@@ -69,6 +69,7 @@ const Home = () => {
   let [options, setOptions] = useState(initOptions);
 	const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 	const localStreamRef = useRef<MediaStream>();
   const senderRef = useRef<RTCRtpSender>();
   const orientation = useOrientation();
@@ -104,8 +105,10 @@ const Home = () => {
       localStream.getTracks().forEach((track) => {
         if (senderRef.current) senderRef.current.replaceTrack(track);
       });
-		} catch (e) {
-			console.log(`getUserMedia error: ${e}`);
+		} catch (e: any) {
+      e.name == "NotAllowedError" ? console.log("User denied camera access") :
+			console.log(e);
+      throw e;
 		}
 	};
 
@@ -198,9 +201,12 @@ const Home = () => {
 
 
   const updateInitOptions = () => {
-    if (!remoteVideoRef.current) return;
-    const dwidth = remoteVideoRef.current.offsetWidth;
-    const dheight = remoteVideoRef.current.offsetHeight;
+    if (!videoContainerRef.current || !remoteVideoRef.current) return;
+    const dwidth = videoContainerRef.current.offsetWidth;
+    const dheight = videoContainerRef.current.offsetHeight;
+
+    videoContainerRef.current.style.height = `${dheight}px`;
+    videoContainerRef.current.style.width = `${dwidth}px`;
 
     // find aspect ratio of video container
     const dar = dwidth / dheight;
@@ -218,8 +224,7 @@ const Home = () => {
               // round to nearest multiple of 16
     initOptions.width = Math.round(initOptions.width / 16) * 16;
     initOptions.height = Math.round(initOptions.height / 16) * 16;
-
-    console.log(remoteVideoRef.current?.offsetWidth, remoteVideoRef.current?.offsetHeight);
+    console.log(initOptions.width, initOptions.height);
 
   }
 
@@ -248,10 +253,6 @@ const Home = () => {
       setIsStreaming(false);
       setIsConnecting(false);
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => {
-          track.stop();
-        });
-        senderRef.current?.track?.stop();
         pcRef.current?.close();
       }
     }
@@ -310,6 +311,7 @@ const Home = () => {
   }, [])
 
   const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
+  const toast = useToast()
 
   
 
@@ -327,10 +329,9 @@ const Home = () => {
         alignItems={["center","center","stretch"]}
         alignContent={["center","center","stretch"]}
       >   
-            <Box flex={1} maxH='100vh' width={['full','full','auto']} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
+            <Box ref={videoContainerRef} flex={1} maxH='100vh' width={['full','full','auto']} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
                 <Box visibility={isStreaming ? 'visible': 'hidden'} width={"full"} height={'full'}>
                   <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline />
-
                 </Box>
                 <AbsoluteCenter>
                   {isConnecting && (
@@ -345,7 +346,59 @@ const Home = () => {
                     fontSize='20px'
                     pl={'4px'}
                     icon={<IoPlaySharp/>}
-                    onClick={() => setStartVideo(true)}
+                    onClick={() => {
+                      // Create an example promise that resolves in 5s
+                      let cameraAccess = false;
+                      const getCameraPermissionsPromise = new Promise((resolve, reject) => {
+                        navigator.permissions.query({name: 'camera'})
+                        .then((permissionObj) => {
+                          console.log(permissionObj.state);
+                          if (permissionObj.state === 'granted') {
+                            resolve(permissionObj.state);
+                            setStartVideo(true);
+                            //setStartVideo(true);
+                            //permission has already been granted, no prompt is shown
+                          } else if (permissionObj.state === 'prompt') {
+                            permissionObj.onchange = (e) => {
+                              if (e.target.state == "granted") {
+                                setStartVideo(true);
+                                resolve(permissionObj.state);
+                              } else {
+                                setStartVideo(false);
+                                reject("denied");
+                              }
+                            }
+                            getLocalStream().then(() => {
+                              setStartVideo(true);
+                              console.log("prompting for camera access")
+                            })
+                            //there's no peristent permission registered, will be showing the prompt
+                          } else if (permissionObj.state === 'denied') {
+                            //permission has been denied
+                            //setStartVideo(true);
+                            reject("denied");
+                          }
+                          
+                          console.log(permissionObj.state);
+                         })
+                         .catch((error) => {
+                          reject("denied");
+                          console.log('Got error :', error);
+                         })
+                        
+                      })
+              
+                      // Will display the loading toast until the promise is either resolved
+                      // or rejected.
+                      if (!cameraAccess) {
+                        toast.promise(getCameraPermissionsPromise, {
+                          success: { title: 'Camera access acquired!', description: 'Good to go!', duration: 1000 },
+                          error: { title: 'Camera Access required!', description: "Camera access is required to use this app. We will not store or record your video feed in any way. You can reset the camera permission for this site in your browser's settings." },
+                          loading: { title: 'Plese allow us to use your camera.', description: 'Your video stream will not be recorded.' },
+                        })
+                      }
+                    }}
+                    
                   />
                   )}
                 </AbsoluteCenter>
