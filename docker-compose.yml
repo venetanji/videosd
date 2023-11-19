@@ -5,8 +5,6 @@ x-base: &x-base
     - LOG_LEVEL=INFO
   volumes:
     - ./diffusert:/workspace/diffusert/
-    - engines:/engines
-    - onnx:/onnx
     - ~/.cache/huggingface:/root/.cache/huggingface
   working_dir: /workspace/diffusert
 
@@ -25,16 +23,35 @@ services:
     environment:
       - ASR_MODEL=small
     profiles:
-      - production
-      - dev
+      - speech
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles:
+      - letsencrypt
+    volumes:
+      - ./certbot/www/:/var/www/certbot/:rw
+      - ./certbot/conf/:/etc/letsencrypt/:rw
+
+  frontend-build:
+    image: node:21-alpine
+    working_dir: /app
+    volumes:
+      - ./client:/app
+    command: "sleep infinity"
+    profiles:
+      - build
 
   frontend: &frontend
     image: nginx
     volumes:
-      - ./public:/usr/share/nginx/html
+      - ./client/out/:/usr/share/nginx/html
       - ./configs/nginx.conf:/etc/nginx/templates/default.conf.template
+      - ./certbot/www/:/var/www/certbot/:ro
+      - ./certbot/conf/:/etc/letsencrypt/:ro
     ports:
       - 80:80
+      - 443:443
     environment:
       - BACKEND_HOST=backend
     profiles:
@@ -45,14 +62,17 @@ services:
     environment:
       - BACKEND_HOST=backend-dev
     profiles:
+      - ''
       - dev
 
   backend: &backend
-    <<: [*x-base, *x-gpu]
+    <<: [*x-base,*x-gpu]
+
     build: .
-    entrypoint: "python server.py"
-    ports:
-      - 8080:8080
+    entrypoint: "python3 server.py"
+    shm_size: 50g
+    expose:
+      - 8080
     profiles:
       - production
   
@@ -61,15 +81,16 @@ services:
     image: videosd-backend
     entrypoint: "sleep infinity"
     profiles:
+      - ''
       - dev
 
-  compile:
-    <<: *backend
-    image: videosd-backend
-    entrypoint: "python compile.py"
-    profiles:
-      - compile
-
-volumes:
-  engines:
-  onnx:
+  coturn:
+    image: coturn/coturn
+    network_mode: host
+    volumes:
+      - ./configs/turnserver.conf:/etc/coturn/turnserver.conf
+    environment:
+      - DETECT_EXTERNAL_IP=no
+      - DETECT_RELAY_IP=no
+      - DETECT_EXTERNAL_IPV6=no
+      - DETECT_RELAY_IPV6=no

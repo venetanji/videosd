@@ -6,28 +6,30 @@ import io
 import os
 import ssl
 import uuid
+import yaml
+import torch
+import sys
 from scipy import io as sio
 import numpy as np
-#import whisper
 
-
-
+import time
+#import whisper 
+from PIL import Image
 from videopipeline import VideoSDPipeline 
 from aiohttp import web, ClientSession
 import aiohttp_cors
 from av import VideoFrame, AudioFifo
 
-from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
+from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
-
-ROOT = os.path.dirname(__file__)
 
 logger = logging.getLogger("pc")
 pcs = set()
+sessions = 0
 relay = MediaRelay()
 bh = MediaBlackhole()
-videosd = None
-
+global session_watchdog
+session_watchdog  = dict({'is_running': False})
 
 class STTTrack(MediaStreamTrack):
     """
@@ -63,9 +65,9 @@ class STTTrack(MediaStreamTrack):
         async with ClientSession() as session:
             url = 'http://whisper:9000/asr?task=transcribe&language=en&output=json'
             async with session.post(url, data={'audio_file':self.audiofile}) as response:
-                response = await response.json()
-                self.text = response['text']
                 print(response)
+                response = await response.json(content_type='text/plain')
+                self.text = response['text']
                 return response['text']
 
     async def recv(self):
@@ -89,38 +91,73 @@ class VideoSDTrack(MediaStreamTrack):
         super().__init__()  # don't forget this!
         self.track = track
         self.options = options
-        self.generating = False
+        self.last_gen_start = [time.time() for i in range(gpu_num)]
+        self.last_gen_frame = time.time()
+        self.avg_gen_time = 0.4
+        #initialize the frame as black empty
+
+        self.init_frame = VideoFrame.from_ndarray(np.zeros((options['height'],options['width'],3),dtype=np.uint8))
         self.current_frame = None
+        self.ref_frame = None
         self.gen_task = None
     
-    def diffuse(self,frame):
-        print(self.options)
-        imgs = trt_model.infer(
-            prompt=[self.options['prompt']],
-            num_of_infer_steps = 20,
-            guidance_scale = 7,
-            init_image= frame.to_image(),
+    async def diffuse(self,frame,gpu=0):
+
+        self.last_gen_start[gpu] = time.time()
+        img = await pipelines[gpu].infer.remote(frame.to_image(),[self.options['prompt']],
+            ref=self.options['ref'],
+            seed=self.options['seed'],
+            num_of_infer_steps = self.options['steps'],
+            guidance_scale = self.options['guidance_scale'],
             strength = self.options['strength'],
-            seed=43)
-        self.generating = False
-        self.current_frame = VideoFrame.from_image(imgs[0])
+            ref_frame = self.ref_frame,
+            style_fidelity = self.options['style_fidelity'],
+            controlnet = self.options['controlnet'],
+            width = self.options['width'],
+            height = self.options['height']
+        )
+        generating[gpu] = False
+        self.avg_gen_time = 0.95*self.avg_gen_time + 0.05*(time.time() - self.last_gen_start[gpu])
+        sys.stdout.write("\rAverage gentime %f" % self.avg_gen_time)
+        if self.options['ref']:
+            self.ref_frame = img
+        self.current_frame = VideoFrame.from_image(img)
 
     async def recv(self):
         frame = await self.track.recv()
-        if not self.generating:
-            self.generating = True
-            if not self.current_frame:
-                self.current_frame = frame
-            asyncio.get_running_loop().run_in_executor(None, self.diffuse,frame)
-        self.current_frame.pts = frame.pts
-        self.current_frame.time_base = frame.time_base
-        return self.current_frame
+        
+        if not self.current_frame:
+            self.current_frame = self.init_frame
+            self.ref_frame = frame.to_image()
+            if not session_watchdog['is_running']:
+                session_watchdog['is_running'] = True
+                print("Starting watchdog")
+                asyncio.create_task(watchdog())
+        
+
+
+        for gpu in range(gpu_num):
+            if not generating[gpu]:
+                if time.time() - np.max(self.last_gen_start) < self.avg_gen_time*sessions/gpu_num: break
+                generating[gpu] = True
+                asyncio.create_task(self.diffuse(frame,gpu))
+                break
+
+        #with lock:
+        outframe = self.current_frame
+        outframe.pts = frame.pts
+        outframe.time_base = frame.time_base
+        return outframe
 
 async def offer(request):
+
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    turn = RTCIceServer(urls=["turn:blendotron.art:51820"], credential="blendotron", username="blendotron")
 
-    pc = RTCPeerConnection()
+    config = RTCConfiguration(iceServers=[turn])
+
+    pc = RTCPeerConnection(configuration=config)
     pc_id = "PeerConnection(%s)" % uuid.uuid4()
     pcs.add(pc)
 
@@ -128,10 +165,7 @@ async def offer(request):
         logger.info(pc_id + " " + msg, *args)
 
     log_info("Created for %s", request.remote)
-    prompt = ["A photo of a cat"]
     tracks = {'audio': None, 'video': None}
-    spoken_prompt = AudioFifo()
-
 
     @pc.on("datachannel")
     def on_datachannel(channel):
@@ -140,12 +174,33 @@ async def offer(request):
             @channel.on("message")
             def on_message(message):
                 message = json.loads(message)
+                print("on message pre", message)
                 if 'strength' in message:
                     message['strength'] = float(message['strength'])
+                if 'steps' in message:
+                    message['steps'] = int(message['steps'])
+                if 'guidance_scale' in message:
+                    message['guidance_scale'] = float(message['guidance_scale'])
+                if 'style_fidelity' in message:
+                    message['style_fidelity'] = float(message['style_fidelity'])
+                if 'seed' in message:
+                    message['seed'] = int(message['seed'])
+                if 'ref' in message:
+                    print(message['ref'])
+                    message['ref'] = bool(message['ref'])
+                if 'controlnet' in message:
+                    message['controlnet'] = bool(message['controlnet']) 
+                if 'set_ref' in message:
+                    tracks['video'].ref_frame = tracks['video'].current_frame.to_image()
+                    
+                    #print("set ref bool in on message", message['set_ref'])
+
+
                 for key, value in message.items():
                     tracks['video'].options[key] = value
 
-                print(message)
+                print("on message post", tracks['video'].options)
+
         elif channel.label == "record":
             @channel.on("message")
             def on_message(message):
@@ -165,13 +220,17 @@ async def offer(request):
     async def on_connectionstatechange():
         log_info("Connection state is %s", pc.connectionState)
         if pc.connectionState == "failed":
-            await pc.close()
             pcs.discard(pc)
-
+            await pc.close()
+            await bh.stop()  
+        if pc.connectionState == "closed":
+            pcs.discard(pc)
+            await pc.close()
+            await bh.stop()
+            
     @pc.on("track")
     def on_track(track):
         log_info("Track %s received", track.kind)
-        
         if track.kind == "video":
             tracks['video'] = VideoSDTrack(track, params["options"])
             pc.addTrack(tracks['video'])
@@ -180,20 +239,26 @@ async def offer(request):
             tracks['audio'] = STTTrack(track)
             bh.addTrack(tracks['audio'])
             
-            print('audiotrack')
-
+            
         @track.on("ended")
         async def on_ended():
             log_info("Track %s ended", track.kind)
+            pcs.discard(pc)
             await bh.stop()
+            await pc.close()
 
+    @pc.on("close")
+    def on_close():
+        log_info("Close")
+  
     # handle offer
+    #print(offer)
     await pc.setRemoteDescription(offer)
     await bh.start()
 
     # send answer
     answer = await pc.createAnswer()
-    print(answer)
+    #print(answer)
     await pc.setLocalDescription(answer)
 
     return web.Response(
@@ -210,6 +275,13 @@ async def on_shutdown(app):
     pcs.clear()
 
 if __name__ == "__main__":
+    config = yaml.safe_load(open("config.yaml"))
+    gpu_num = config['gpus']
+
+    global generating 
+    generating = [False for i in range(gpu_num)]
+    
+
     parser = argparse.ArgumentParser(
         description="WebRTC audio / video / data-channels demo"
     )
@@ -244,12 +316,37 @@ if __name__ == "__main__":
             allow_headers="*",
         )
     })
+
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
+    global pipelines 
+    pipelines = [None for i in range(gpu_num)]
+    
+    for i in range(gpu_num):
+        pipelines[i] = VideoSDPipeline.remote(**config)
 
-    trt_model = VideoSDPipeline()
-    trt_model.loadEngines()
-    trt_model.loadModules()
+    async def watchdog():
+        while True:
+            # print("Senders", senders)
+            # print("Receivers", receivers)
+
+            # count transports that are in connected state
+            sessions = 0
+            receivers_count = 0
+            senders_count = 0
+            for pc in pcs:
+                for receiver in pc.getReceivers():
+                    receivers_count += 1
+                    sessions += 1 if receiver.transport.state == "connected" else 0
+                for sender in pc.getSenders():
+                    senders_count += 1
+
+            print("Receivers", receivers_count)
+            print("Senders", senders_count)
+            print("Active sessions", sessions)        
+            print("Pcs", len(pcs))
+            print("Generating", generating)
+            await asyncio.sleep(5)
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context

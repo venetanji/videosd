@@ -1,38 +1,34 @@
 # videosd
 
-TensorRT accelerated diffusion pipeline, combined with webrtc frontend for camera input and speech recognition.
+A webrtc video interface to StableDiffusion pipelines
 
-![videosd](https://user-images.githubusercontent.com/36767/219042235-6585f79c-13a5-4380-a8b5-5e0ac3fc5733.gif)
-
-# Compile the engines
+# Run (dev)
 
 ```
-docker compose build backend
-docker compose run --rm compile
+docker compose up -d
+docker compose exec backend-dev bash
 ```
 
-This will run compile.py inside the container to generate the engine files inside the dedicated volumes. This may take a while depending on your GPU and available RAM.
-Note that docker will kill the process if it exceeds allocated ram (in WSL this is 50% of your total ram, 8GB will not be enough).
-Minimal VRAM tested on is 6GB on my RTX3060 laptop.  You can try the `python compile.py --onnx-minimal-optimization` if it fails with the unet.
-If you want to recompile, just rename or recreate the volumes or spin up the dev container, get a shell and run it from there. Good Luck.
+You can also attach vscode to the dev container by browsing remotes or using the docker vscode extension.
+To start the server run `python server.py` within the container.
+
+```
+root# python3 server.py
+```
+
+# Config
+Set configuration in diffusert/config.yml
+
+```
+gpus: 4
+```
 
 # Run the server in production mode
+
+Edit `configs/turnserver.conf`
 
 ```
 docker compose --profile production up -d
 ```
 
-App should be running on port 80. You can run the frontend locally at localhost:80 or run `ngrok http 80` and open the link from a mobile phone in the same network.
-
-# Run the server in dev mode
-
-```
-docker compose --profile dev up -d
-docker exec -it videosd-backend-dev-1 bash
-```
-
-You can now attach vscode to the dev container by browsing remotes or using the docker vscode extension. To start the server run `python server.py` within the container.
-
-# Multi-gpu and controlnet support
-
-Checkout the `multi-gpu` branch for (duh!) multi GPU support and controlnet. Credit https://github.com/hnsywangxin/controlnet_stable_tensorrt/ 
+App should be running on port 80. You will need an ssl connection, for convenience you can use the certbot container or use ngrok (`ngrok http 80`)

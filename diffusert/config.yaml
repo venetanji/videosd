@@ -1,0 +1,5 @@
+model: SG161222/Realistic_Vision_V5.1_noVAE
+controlnet: lllyasviel/sd-controlnet-canny
+#controlnet: monster-labs/control_v1p_sd15_qrcode_monster
+gpus: 4
+compile: False
