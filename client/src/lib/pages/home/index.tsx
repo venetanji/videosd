@@ -102,9 +102,6 @@ const Home = () => {
 
 			localStreamRef.current = localStream;
 			if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
-      localStream.getTracks().forEach((track) => {
-        if (senderRef.current) senderRef.current.replaceTrack(track);
-      });
 		} catch (e: any) {
       e.name == "NotAllowedError" ? console.log("User denied camera access") :
 			console.log(e);
@@ -346,58 +343,51 @@ const Home = () => {
                     fontSize='20px'
                     pl={'4px'}
                     icon={<IoPlaySharp/>}
-                    onClick={() => {
+                    onClick={async () => {
                       // Create an example promise that resolves in 5s
-                      let cameraAccess = false;
-                      const getCameraPermissionsPromise = new Promise((resolve, reject) => {
-                        navigator.permissions.query({name: 'camera'})
-                        .then((permissionObj) => {
-                          console.log(permissionObj.state);
-                          if (permissionObj.state === 'granted') {
-                            resolve(permissionObj.state);
-                            setStartVideo(true);
-                            //setStartVideo(true);
-                            //permission has already been granted, no prompt is shown
-                          } else if (permissionObj.state === 'prompt') {
-                            permissionObj.onchange = (e) => {
-                              if (e.target.state == "granted") {
-                                setStartVideo(true);
-                                resolve(permissionObj.state);
-                              } else {
-                                setStartVideo(false);
-                                reject("denied");
+                      const permissionObj = await navigator.permissions.query({name: 'camera' as PermissionName});
+
+                      console.log(permissionObj)
+                      if (permissionObj.state === 'granted') {
+                        setStartVideo(true);
+                        //setStartVideo(true);
+                        //permission has already been granted, no prompt is shown
+                      } else if (permissionObj.state === 'prompt' || permissionObj.state === 'denied') {
+                        const getCameraPermissionsPromise = new Promise((resolve, reject) => {
+                              permissionObj.onchange = (e) => {
+                                if (!e.target) resolve("error");
+                                const permissionStatus = e.target as PermissionStatus;
+                                if (!permissionStatus.state) resolve("denied");
+                                if (permissionStatus.state == "granted") {
+                                  setStartVideo(true);
+                                  resolve(permissionObj.state);
+                                } else {
+                                  setStartVideo(false);
+                                  reject("denied");
+                                }
                               }
-                            }
-                            getLocalStream().then(() => {
-                              setStartVideo(true);
-                              console.log("prompting for camera access")
-                            })
-                            //there's no peristent permission registered, will be showing the prompt
-                          } else if (permissionObj.state === 'denied') {
-                            //permission has been denied
-                            //setStartVideo(true);
-                            reject("denied");
-                          }
-                          
-                          console.log(permissionObj.state);
-                         })
-                         .catch((error) => {
-                          reject("denied");
-                          console.log('Got error :', error);
-                         })
-                        
-                      })
-              
-                      // Will display the loading toast until the promise is either resolved
-                      // or rejected.
-                      if (!cameraAccess) {
+                              getLocalStream().then(() => {
+                                setStartVideo(true);
+                                console.log("prompting for camera access")
+                              }).catch((e) => {
+                                console.log(e);
+                                reject("denied");
+                              })
+                              //there's no peristent permission registered, will be showing the prompt
+                            
+                            console.log(permissionObj.state);
+                          })
                         toast.promise(getCameraPermissionsPromise, {
                           success: { title: 'Camera access acquired!', description: 'Good to go!', duration: 1000 },
                           error: { title: 'Camera Access required!', description: "Camera access is required to use this app. We will not store or record your video feed in any way. You can reset the camera permission for this site in your browser's settings." },
                           loading: { title: 'Plese allow us to use your camera.', description: 'Your video stream will not be recorded.' },
                         })
-                      }
-                    }}
+                          
+                
+                      // Will display the loading toast until the promise is either resolved
+                      // or rejected.
+
+                    }}}
                     
                   />
                   )}
