@@ -102,6 +102,9 @@ const Home = () => {
 
 			localStreamRef.current = localStream;
 			if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
+      if (senderRef.current) {
+        senderRef.current.replaceTrack(localStream.getVideoTracks()[0]);
+      }
 		} catch (e: any) {
       e.name == "NotAllowedError" ? console.log("User denied camera access") :
 			console.log(e);
