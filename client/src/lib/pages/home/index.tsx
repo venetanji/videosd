@@ -1,9 +1,9 @@
 'use client';
 
-import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer } from '@chakra-ui/react';
+import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer, Skeleton, AbsoluteCenter, useDisclosure, Spinner, Fade } from '@chakra-ui/react';
 import { Html } from 'next/document';
 import { userAgentFromString } from 'next/server';
-import React, { useState, useRef, useEffect, useCallback, useMemo, use, ChangeEvent } from 'react';
+import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from 'react';
 import { useOrientation } from "@uidotdev/usehooks";
 import {
   Slider,
@@ -17,6 +17,9 @@ import {
 import { Icon } from '@chakra-ui/react'
 import { MdFlipCameraIos } from 'react-icons/md'
 import { FaDice} from 'react-icons/fa'
+import { FaRegCirclePlay } from "react-icons/fa6";
+import { IoPlaySharp, IoStopSharp } from "react-icons/io5";
+
 
 import SliderParameter from '~/lib/components/SliderParameter';
 
@@ -58,9 +61,9 @@ const Home = () => {
   const dcRef = useRef<RTCDataChannel>();
   let facingMode = 'user';
   const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
-  let isConnecting = false;
+  const [isConnecting, setIsConnecting] = useState(false);
   
-  const [previewOpen, setPreviewOpen] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
   
 
   let [options, setOptions] = useState(initOptions);
@@ -194,7 +197,6 @@ const Home = () => {
   },[]);
 
 
-
   const updateInitOptions = () => {
     if (!remoteVideoRef.current) return;
     const dwidth = remoteVideoRef.current.offsetWidth;
@@ -221,21 +223,39 @@ const Home = () => {
 
   }
 
+  const [startVideo, setStartVideo] = useState(false);
+
   useEffect(() => {
     console.log(isConnecting)
-    if (!isConnecting) {
-      isConnecting = true;
+    if (!isConnecting && startVideo) {
+      setIsConnecting(true);
       console.log("Negotiating...");
       getLocalStream().then(() => {
         if (remoteVideoRef.current) {
           updateInitOptions();
           negotiate().then(() => { 
+            setIsConnecting(false);
             setIsStreaming(true);
           });
+        } else {
+          console.log("remote video ref is null");
+          setIsConnecting(false);
         }
       });
     }
-  }, [facingMode]);
+    if (isStreaming && startVideo == false) {
+      console.log("Stopping stream");
+      setIsStreaming(false);
+      setIsConnecting(false);
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => {
+          track.stop();
+        });
+        senderRef.current?.track?.stop();
+        pcRef.current?.close();
+      }
+    }
+  }, [startVideo]);
 
   const handleChange = (name: string, value: any) => {
     setOptions(prevState => ({
@@ -288,6 +308,9 @@ const Home = () => {
       window.removeEventListener('resize', setWindowDimensions)
     }
   }, [])
+
+  const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
+
   
 
   return (
@@ -304,14 +327,64 @@ const Home = () => {
         alignItems={["center","center","stretch"]}
         alignContent={["center","center","stretch"]}
       >   
+            <Box flex={1} maxH='100vh' width={['full','full','auto']} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
+                <Box visibility={isStreaming ? 'visible': 'hidden'} width={"full"} height={'full'}>
+                  <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline />
+
+                </Box>
+                <AbsoluteCenter>
+                  {isConnecting && (
+                    <Spinner size="md" color="white" />
+                  )}
+                  {!isStreaming && !isConnecting && (
+                    <IconButton
+                    isRound={true}
+                    variant='solid'
+                    colorScheme='red'
+                    aria-label='Done'
+                    fontSize='20px'
+                    pl={'4px'}
+                    icon={<IoPlaySharp/>}
+                    onClick={() => setStartVideo(true)}
+                  />
+                  )}
+                </AbsoluteCenter>
+                <Fade in={isOpen} onHoverStart={onOpen} onHoverEnd={onClose}>
+                  <Box
+                    p={2}
+                    color='white'
+                    opacity={isOpen? 0.6 : 0}
+                    bottom={0}
+                    right={0}
+                    width={'100%'}
+                    textAlign={'center'}
+                    shadow='md'
+                    position='absolute'
+                  >
+                    {isStreaming && (
+                      <IconButton
+                      isRound={true}
+                      variant='solid'
+                      opacity={isOpen? 1 : 0}
+                      colorScheme='red'
+                      aria-label='Done'
+                      bg='red.300'
+                      fontSize='20px'
+                      icon={<IoStopSharp/>}
+                      onClick={() => setStartVideo(false)}
+                    />
+                    )}
+                  </Box>
+                </Fade> 
+            </Box>
+
           
-          <Box flex={1} maxH='100vh' width={['full','full','auto']}>
-            <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline /> 
-          </Box>
 
           <Box visibility={previewOpen ? 'visible' : 'hidden'} position={'absolute'} boxShadow='dark-lg' w={['20vw', '10vw']} top={0} left={0} m={2}>
-              <video ref={localVideoRef} autoPlay playsInline />
+            <video ref={localVideoRef} autoPlay playsInline />
           </Box>
+
+
 
               <Tabs size={['sm','md']} minH={160} isFitted w={['full','full','auto']}>
                 <TabList>
