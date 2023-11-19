@@ -67,6 +67,7 @@ services:
 
   backend: &backend
     <<: [*x-base,*x-gpu]
+
     build: .
     entrypoint: "python3 server.py"
     shm_size: 50g
