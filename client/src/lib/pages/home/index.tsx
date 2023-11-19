@@ -179,9 +179,13 @@ const Home = () => {
   useEffect(() => {
     if (!fsRef.current) return;
     if (isFull) {
-      fsRef.current.requestFullscreen();
+      fsRef.current.requestFullscreen().then(() => {
+        setWindowDimensions();
+      })
     } else if (document.fullscreenElement != null) {
-      document.exitFullscreen();
+      document.exitFullscreen().then(() => {
+        setWindowDimensions();
+      })
     }
   }, [isFull]);
 
@@ -221,6 +225,7 @@ const Home = () => {
               // round to nearest multiple of 16
     initOptions.width = Math.round(initOptions.width / 16) * 16;
     initOptions.height = Math.round(initOptions.height / 16) * 16;
+
     console.log(initOptions.width, initOptions.height);
 
   }
