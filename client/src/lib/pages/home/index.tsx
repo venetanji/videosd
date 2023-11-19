@@ -243,6 +243,7 @@ const Home = () => {
           negotiate().then(() => { 
             setIsConnecting(false);
             setIsStreaming(true);
+            setPreviewOpen(true);
           });
         } else {
           console.log("remote video ref is null");
@@ -254,6 +255,7 @@ const Home = () => {
       console.log("Stopping stream");
       setIsStreaming(false);
       setIsConnecting(false);
+      setPreviewOpen(false)
       if (localStreamRef.current) {
         pcRef.current?.close();
       }
@@ -267,7 +269,7 @@ const Home = () => {
     }));
         console.log(options);
         if (!dcRef.current) return;
-        if (dcRef.current?.readyState == "open")
+        if (dcRef.current?.readyState === "open")
           console.log("Sending in data channel..")
           dcRef.current.send(JSON.stringify({[name]: value}));
   };
@@ -299,10 +301,10 @@ const Home = () => {
   };
 
   const setWindowDimensions = useCallback(() => {
-    if (!remoteVideoRef.current) return;
-    handleChange("width", remoteVideoRef.current.offsetWidth);
-    handleChange("height", remoteVideoRef.current.offsetHeight);
-    console.log(remoteVideoRef.current.offsetHeight)
+    if (!videoContainerRef.current) return;
+    videoContainerRef.current.style.height = "auto";
+    handleChange("width", videoContainerRef.current.offsetWidth);
+    handleChange("height", videoContainerRef.current.offsetHeight);
   },[handleChange])
 
   useEffect(() => {
