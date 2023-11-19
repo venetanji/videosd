@@ -25,8 +25,11 @@ from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, Med
 
 logger = logging.getLogger("pc")
 pcs = set()
+sessions = 0
 relay = MediaRelay()
 bh = MediaBlackhole()
+global session_watchdog
+session_watchdog  = dict({'is_running': False})
 
 class STTTrack(MediaStreamTrack):
     """
@@ -92,17 +95,14 @@ class VideoSDTrack(MediaStreamTrack):
         self.last_gen_frame = time.time()
         self.avg_gen_time = 0.4
         #initialize the frame as black empty
+
+        self.init_frame = VideoFrame.from_ndarray(np.zeros((options['height'],options['width'],3),dtype=np.uint8))
         self.current_frame = None
         self.ref_frame = None
         self.gen_task = None
     
     async def diffuse(self,frame,gpu=0):
 
-        #frame.to_image().save('frame.png')
-        #print("Frame size: ", frame.to_image().size)
-        #self.ref_frame.save('ref_frame.png')
-        
-        #print(self.generating)
         self.last_gen_start[gpu] = time.time()
         img = await pipelines[gpu].infer.remote(frame.to_image(),[self.options['prompt']],
             ref=self.options['ref'],
@@ -125,19 +125,21 @@ class VideoSDTrack(MediaStreamTrack):
 
     async def recv(self):
         frame = await self.track.recv()
+        
+        if not self.current_frame:
+            self.current_frame = self.init_frame
+            self.ref_frame = frame.to_image()
+            if not session_watchdog['is_running']:
+                session_watchdog['is_running'] = True
+                print("Starting watchdog")
+                asyncio.create_task(watchdog())
+        
+
 
         for gpu in range(gpu_num):
             if not generating[gpu]:
-                if not self.current_frame:
-                    self.current_frame = frame
-                    self.ref_frame = frame.to_image()
-
-                print("sessions", len(pcs))
-
-                if time.time() - np.max(self.last_gen_start) < self.avg_gen_time*len(pcs)/gpu_num: break
-
+                if time.time() - np.max(self.last_gen_start) < self.avg_gen_time*sessions/gpu_num: break
                 generating[gpu] = True
-                #print("Generating on GPU ", gpu)
                 asyncio.create_task(self.diffuse(frame,gpu))
                 break
 
@@ -148,6 +150,7 @@ class VideoSDTrack(MediaStreamTrack):
         return outframe
 
 async def offer(request):
+
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
     turn = RTCIceServer(urls=["turn:blendotron.art:51820"], credential="blendotron", username="blendotron")
@@ -162,10 +165,7 @@ async def offer(request):
         logger.info(pc_id + " " + msg, *args)
 
     log_info("Created for %s", request.remote)
-    prompt = ["A photo of a cat"]
     tracks = {'audio': None, 'video': None}
-    spoken_prompt = AudioFifo()
-
 
     @pc.on("datachannel")
     def on_datachannel(channel):
@@ -221,7 +221,8 @@ async def offer(request):
         log_info("Connection state is %s", pc.connectionState)
         if pc.connectionState == "failed":
             pcs.discard(pc)
-            await pc.close()  
+            await pc.close()
+            await bh.stop()  
         if pc.connectionState == "closed":
             pcs.discard(pc)
             await pc.close()
@@ -230,7 +231,6 @@ async def offer(request):
     @pc.on("track")
     def on_track(track):
         log_info("Track %s received", track.kind)
-        
         if track.kind == "video":
             tracks['video'] = VideoSDTrack(track, params["options"])
             pc.addTrack(tracks['video'])
@@ -239,16 +239,18 @@ async def offer(request):
             tracks['audio'] = STTTrack(track)
             bh.addTrack(tracks['audio'])
             
-            print('audiotrack')
-
+            
         @track.on("ended")
         async def on_ended():
             log_info("Track %s ended", track.kind)
             pcs.discard(pc)
             await bh.stop()
             await pc.close()
-            
 
+    @pc.on("close")
+    def on_close():
+        log_info("Close")
+  
     # handle offer
     #print(offer)
     await pc.setRemoteDescription(offer)
@@ -275,7 +277,10 @@ async def on_shutdown(app):
 if __name__ == "__main__":
     config = yaml.safe_load(open("config.yaml"))
     gpu_num = config['gpus']
+
+    global generating 
     generating = [False for i in range(gpu_num)]
+    
 
     parser = argparse.ArgumentParser(
         description="WebRTC audio / video / data-channels demo"
@@ -311,20 +316,37 @@ if __name__ == "__main__":
             allow_headers="*",
         )
     })
+
     cors.add(app.router.add_post("/offer", offer))
     app.on_shutdown.append(on_shutdown)
+    global pipelines 
     pipelines = [None for i in range(gpu_num)]
     
-    # load trt model into every gpus
-    # TODO make this async and return when all models are loaded
-    
-    
     for i in range(gpu_num):
-        #config['device'] = i
         pipelines[i] = VideoSDPipeline.remote(**config)
-        # pipelines[i] = VideoSDPipeline(**config)
-        # if config['compile']:
-        #     pipelines[i].compile_model()
+
+    async def watchdog():
+        while True:
+            # print("Senders", senders)
+            # print("Receivers", receivers)
+
+            # count transports that are in connected state
+            sessions = 0
+            receivers_count = 0
+            senders_count = 0
+            for pc in pcs:
+                for receiver in pc.getReceivers():
+                    receivers_count += 1
+                    sessions += 1 if receiver.transport.state == "connected" else 0
+                for sender in pc.getSenders():
+                    senders_count += 1
+
+            print("Receivers", receivers_count)
+            print("Senders", senders_count)
+            print("Active sessions", sessions)        
+            print("Pcs", len(pcs))
+            print("Generating", generating)
+            await asyncio.sleep(5)
 
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context

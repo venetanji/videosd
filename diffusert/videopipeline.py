@@ -14,7 +14,7 @@ import ray
 from PIL import Image
 
 
-@ray.remote(num_gpus=1, num_cpus=1)
+@ray.remote(num_gpus=1, num_cpus=4)
 class VideoSDPipeline:
     """
     Application showcasing the acceleration of Stable Diffusion Txt2Img v1.4, v1.5, v2.0, v2.0-base, v2.1, v2.1-base pipeline using NVidia TensorRT w/ Plugins.
@@ -172,9 +172,6 @@ class VideoSDPipeline:
             generator=self.generator,
             strength=strength
         )
-        
-        torch.cuda.set_device(self.device)
-        torch.cuda.synchronize(self.device)
 
         torch.manual_seed(seed).set_state(self.cpu_generator_init_state)
         
