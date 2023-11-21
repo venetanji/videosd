@@ -59,7 +59,7 @@ const promptExamples = [
 const Home = () => {
   const pcRef = useRef<RTCPeerConnection>();
   const dcRef = useRef<RTCDataChannel>();
-  let facingMode = 'user';
+  const [facingMode, setFacingMode] = useState('user');
   const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   
@@ -110,7 +110,7 @@ const Home = () => {
 			console.log(e);
       throw e;
 		}
-	};
+	}
 
   const createConnection = useCallback(() =>{
 		try {
@@ -152,7 +152,7 @@ const Home = () => {
 
   const [isStreaming, setIsStreaming] = useState(false);
   
-  const negotiate = useCallback(async () => {
+  const negotiate = async () => {
     pcRef.current = createConnection();
     const pc = pcRef.current;
     if (!pc) return;
@@ -174,7 +174,7 @@ const Home = () => {
     pc.setRemoteDescription(answer);
 
     console.log(answer);
-  }, [localStreamRef.current]);
+  };
 
   const [isFull, setIsFull] = useState(false);
   const fsRef = useRef<HTMLDivElement>(null);
@@ -209,8 +209,6 @@ const Home = () => {
     const dwidth = videoContainerRef.current.offsetWidth;
     const dheight = videoContainerRef.current.offsetHeight;
 
-    videoContainerRef.current.style.height = `${dheight}px`;
-    videoContainerRef.current.style.width = `${dwidth}px`;
 
     // find aspect ratio of video container
     const dar = dwidth / dheight;
@@ -228,6 +226,10 @@ const Home = () => {
               // round to nearest multiple of 16
     initOptions.width = Math.round(initOptions.width / 16) * 16;
     initOptions.height = Math.round(initOptions.height / 16) * 16;
+    
+    // remoteVideoRef.current.style.height = `${initOptions.height}px`;
+    // remoteVideoRef.current.style.width = `${initOptions.width}px`;
+    // videoContainerRef.current.style.width = `${dwidth}px`;
 
     console.log(initOptions.width, initOptions.height);
 
@@ -244,6 +246,7 @@ const Home = () => {
         if (remoteVideoRef.current) {
           updateInitOptions();
           negotiate().then(() => { 
+            console.log("negotiated");
             setIsConnecting(false);
             setIsStreaming(true);
             setPreviewOpen(true);
@@ -252,6 +255,9 @@ const Home = () => {
           console.log("remote video ref is null");
           setIsConnecting(false);
         }
+      }).catch((e) => {
+        console.log(e);
+        setIsConnecting(false);
       });
     }
     if (isStreaming && startVideo == false) {
@@ -263,19 +269,20 @@ const Home = () => {
         pcRef.current?.close();
       }
     }
-  }, [startVideo]);
+  }, [startVideo, facingMode]);
 
-  const handleChange = (name: string, value: any) => {
+  const handleChange = useCallback((name: string, value: any) => {
     setOptions(prevState => ({
         ...prevState,
         [name]: value
     }));
+        console.log(name, value)
         console.log(options);
         if (!dcRef.current) return;
         if (dcRef.current?.readyState === "open")
           console.log("Sending in data channel..")
           dcRef.current.send(JSON.stringify({[name]: value}));
-  };
+  }, [options]);
 
   useEffect(() => {
     const cleanup = () => {
@@ -295,17 +302,19 @@ const Home = () => {
 
   const flipCamera = (e: ChangeEvent) => {
     if (facingMode == 'environment') {
-      facingMode = 'user';
+      setFacingMode('user');
     } else {
-      facingMode = 'environment';
+      setFacingMode('environment');
     }
+    
     console.log("flipping camera", facingMode)
     getLocalStream();
   };
 
   const setWindowDimensions = useCallback(() => {
     if (!videoContainerRef.current) return;
-    videoContainerRef.current.style.height = "auto";
+
+    
     handleChange("width", videoContainerRef.current.offsetWidth);
     handleChange("height", videoContainerRef.current.offsetHeight);
   },[handleChange])
@@ -318,9 +327,7 @@ const Home = () => {
   }, [])
 
   const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
-  const toast = useToast()
-
-  
+  const toast = useToast()  
 
   return (
 
@@ -329,15 +336,15 @@ const Home = () => {
       
 
       <Flex
-        direction={["column","column","row"]}
+        direction={["column","row"]}
         gap={[0,0]}
-        
         h={'full'}
-        alignItems={["center","center","stretch"]}
-        alignContent={["center","center","stretch"]}
+        w={'full'}
+        alignItems={["center","stretch"]}
+        alignContent={["center","stretch"]}
       >   
-            <Box ref={videoContainerRef} flex={1} maxH='100vh' width={['full','full','auto']} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
-                <Box visibility={isStreaming ? 'visible': 'hidden'} width={"full"} height={'full'}>
+            <Box ref={videoContainerRef} flex={'auto'} maxH={['90vh', '100vh']} width={['full','auto']} h={'100%'} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
+                <Box visibility={isStreaming ? 'visible': 'hidden'} height={['initial','auto', 'auto']}  flex={1} >
                   <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline />
                 </Box>
                 <AbsoluteCenter>
@@ -434,12 +441,12 @@ const Home = () => {
           
 
           <Box visibility={previewOpen ? 'visible' : 'hidden'} position={'absolute'} boxShadow='dark-lg' w={['20vw', '10vw']} top={0} left={0} m={2}>
-            <video ref={localVideoRef} autoPlay playsInline />
+            <video  ref={localVideoRef} autoPlay playsInline />
           </Box>
 
 
 
-              <Tabs size={['sm','md']} minH={160} isFitted w={['full','full','auto']}>
+              <Tabs flex={'initial'} size={['sm','md']} minH={160} isFitted w={['full','auto']}>
                 <TabList>
                   <Tab>Prompt</Tab>
                   <Tab>Diffusion</Tab>
