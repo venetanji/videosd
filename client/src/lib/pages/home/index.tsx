@@ -274,7 +274,7 @@ const Home = () => {
     }
   }, [startVideo, facingMode]);
 
-  const handleChange = useCallback((name: string, value: any) => {
+  const handleChange = (name: string, value: any) => {
     setOptions(prevState => ({
         ...prevState,
         [name]: value
@@ -282,13 +282,14 @@ const Home = () => {
         console.log(name, value)
         console.log(options);
         if (!dcRef.current) return;
-        if (dcRef.current?.readyState === "open")
+        if (dcRef.current?.readyState === "open") {
           console.log("Sending in data channel..")
           try {
             dcRef.current.send(JSON.stringify({[name]: value}));
           } catch (e) {
-            console.log
+            console.log(e)
           }
+        }
   };
 
   useEffect(() => {
