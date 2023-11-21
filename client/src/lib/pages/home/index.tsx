@@ -74,6 +74,9 @@ const Home = () => {
   const senderRef = useRef<RTCRtpSender>();
   const orientation = useOrientation();
   let called = 0;
+  useEffect(() => {
+    setWindowDimensions();
+  }, [orientation]);
 
   const getLocalStream = async () => {
     called++;
@@ -271,7 +274,11 @@ const Home = () => {
         if (!dcRef.current) return;
         if (dcRef.current?.readyState === "open")
           console.log("Sending in data channel..")
-          dcRef.current.send(JSON.stringify({[name]: value}));
+          try {
+            dcRef.current.send(JSON.stringify({[name]: value}));
+          } catch (e) {
+            console.log
+          }
   };
 
   useEffect(() => {
@@ -334,8 +341,8 @@ const Home = () => {
         alignContent={["center","center","stretch"]}
       >   
             <Box ref={videoContainerRef} flex={1} maxH='100vh' width={['full','full','auto']} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
-                <Box visibility={isStreaming ? 'visible': 'hidden'} width={"full"} height={'full'}>
-                  <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline />
+                <Box visibility={isStreaming ? 'visible': 'hidden'} width={['full','full','auto']} height={['full','full','auto']}>
+                  <video style={{width: "auto", height: "auto"}} ref={remoteVideoRef} autoPlay playsInline />
                 </Box>
                 <AbsoluteCenter>
                   {isConnecting && (

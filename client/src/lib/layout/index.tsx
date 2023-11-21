@@ -12,7 +12,7 @@ type LayoutProps = {
 const Layout = ({ children }: LayoutProps) => {
   const [isFull, setIsFull] = useState(false);
   return (
-    <Flex h='100vh' direction='column' alignItems={'stretch'} alignContent={'stretch'}>
+    <Flex h='100vh' direction='column' alignItems={'stretch'} alignContent={'flex-start'}>
       {children}
       <Footer />
     </Flex>
