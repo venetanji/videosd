@@ -46,16 +46,7 @@ class VideoSDPipeline:
         )
         return self.model(**kwarg_inputs).images[0]
 
-    def load_model(self, model_name, controlnet_model="lllyasviel/sd-controlnet-canny"):
-        #self.controlnet = ControlNetModel.from_pretrained(controlnet_model, torch_dtype=torch.float32)
-        # self.model = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(model_name, 
-        #                                                             controlnet=self.controlnet, torch_dtype=torch.float16)
-        #self.model = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7", custom_pipeline="latent_consistency_txt2img", custom_revision="main", revision="fb9c5d")
-        # self.model = LatentConsistencyModelImg2ImgPipeline.from_pretrained(
-        #         pretrained_model_name_or_path="SimianLuo/LCM_Dreamshaper_v7",
-        #         safety_checker=None
-        #     )
-        # qrcode monster: "monster-labs/control_v1p_sd15_qrcode_monster"
+    def load_model(self, model_name, controlnet_model="lllyasviel/control_v11p_sd15_canny"):
 
         controlnet_canny = ControlNetModel.from_pretrained(
             controlnet_model, torch_dtype=torch.float16
