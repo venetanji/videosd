@@ -24,7 +24,7 @@ import { IoPlaySharp, IoStopSharp } from "react-icons/io5";
 import SliderParameter from '~/lib/components/SliderParameter';
 
 const chain = new RemoteRunnable({
-  url: `http://blendotron.art/llama-chat/`,
+  url: `https://blendotron.art/llama-chat/`,
   options:{timeout: 300000},
 });
 
@@ -79,13 +79,24 @@ const Home = () => {
 	const localStreamRef = useRef<MediaStream>();
   const senderRef = useRef<RTCRtpSender>();
   const orientation = useOrientation();
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [isFull, setIsFull] = useState(false);
+  const fsRef = useRef<HTMLDivElement>(null);
+  const [startVideo, setStartVideo] = useState(false);
+  const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
+  const toast = useToast()
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
+
+
+
   let called = 0;
   useEffect(() => {
     setWindowDimensions();
   }, [orientation]);
 
-  const getLocalStream = async () => {
+  const getLocalStream = useCallback(async () => {
     called++;
+    console.log("is streaming", isStreaming)
     console.log(`get localstream ${called}`, facingMode)
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
@@ -119,7 +130,7 @@ const Home = () => {
 			console.log(e);
       throw e;
 		}
-	}
+	}, [facingMode]);
 
   const createConnection = useCallback(() =>{
 		try {
@@ -159,7 +170,6 @@ const Home = () => {
 		}
 	}, [localStreamRef.current]);
 
-  const [isStreaming, setIsStreaming] = useState(false);
   
   const negotiate = async () => {
     pcRef.current = createConnection();
@@ -185,8 +195,7 @@ const Home = () => {
     console.log(answer);
   };
 
-  const [isFull, setIsFull] = useState(false);
-  const fsRef = useRef<HTMLDivElement>(null);
+
 
   useEffect(() => {
     if (!fsRef.current) return;
@@ -244,15 +253,10 @@ const Home = () => {
 
   }
 
-  const [startVideo, setStartVideo] = useState(false);
 
   useEffect(() => {
-    console.log("Is connecting: " + isConnecting)
-    console.log("Start video: " + startVideo)
+
     if (!isConnecting && startVideo) {
-      
-      console.log("Is connecting in if: " + isConnecting)
-      console.log("Start video in if: " + startVideo)
       setIsConnecting(true);
       console.log("Negotiating...");
       getLocalStream().then(() => {
@@ -330,15 +334,14 @@ const Home = () => {
   };
 
   useEffect(() => {
-    if (isStreaming)
-      console.log(isStreaming)
+    if (isStreaming) {
+      console.log("facing mode", isStreaming)
       getLocalStream();
+    }
   }, [facingMode]);
 
   const setWindowDimensions = useCallback(() => {
-    console.log("resizing")
-    console.log(isStreaming)
-    console.log(videoContainerRef.current)
+
     if (!videoContainerRef.current || !isStreaming) return;
 
     console.log("resizing")
@@ -353,12 +356,6 @@ const Home = () => {
       window.removeEventListener('resize', setWindowDimensions)
     }
   }, [isStreaming])
-
-  const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
-  const toast = useToast()
-
-  const [generatingPrompt, setGeneratingPrompt] = useState(false);
-
 
   const expandPrompt = (random: boolean = false) => {
     setGeneratingPrompt(true);
@@ -391,7 +388,7 @@ const Home = () => {
             permissionObj.onchange = (e) => {
               if (!e.target) resolve("error");
               const permissionStatus = e.target as PermissionStatus;
-              if (!permissionStatus.state) resolve("denied");
+              if (!permissionStatus.state) reject("denied");
               if (permissionStatus.state == "granted") {
                 setStartVideo(true);
                 resolve(permissionObj.state);
@@ -406,9 +403,7 @@ const Home = () => {
             }).catch((e) => {
               console.log(e);
               reject("denied");
-            })
-            //there's no peristent permission registered, will be showing the prompt
-          
+            })        
           console.log(permissionObj.state);
         })
       toast.promise(getCameraPermissionsPromise, {
@@ -455,7 +450,7 @@ const Home = () => {
                     fontSize='20px'
                     pl={'4px'}
                     icon={<IoPlaySharp/>}
-                    onClick={playPromise}
+                    onClick={() => playPromise()}
                     
                   />
                   )}
