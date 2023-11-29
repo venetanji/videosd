@@ -1,23 +1,17 @@
 'use client';
 import { RemoteRunnable } from "langchain/runnables/remote";
-import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer, Skeleton, AbsoluteCenter, useDisclosure, Spinner, Fade, useToast } from '@chakra-ui/react';
-import { Html } from 'next/document';
-import { userAgentFromString } from 'next/server';
+import { Flex, Box, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, FormControl, FormLabel, Input, Textarea,  Button,AbsoluteCenter, useDisclosure, Spinner, Fade, useToast, Tooltip } from '@chakra-ui/react';
 import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from 'react';
 import { useOrientation } from "@uidotdev/usehooks";
 import {
-  Slider,
-  SliderTrack,
-  SliderFilledTrack,
-  SliderThumb,
-  SliderMark,
   Switch,
 } from '@chakra-ui/react'
 
-import { Icon } from '@chakra-ui/react'
-import { MdFlipCameraIos } from 'react-icons/md'
-import { FaDice} from 'react-icons/fa'
-import { FaRegCirclePlay } from "react-icons/fa6";
+
+
+
+import { FaDice, FaTrash} from 'react-icons/fa'
+import { FaShuffle } from "react-icons/fa6";
 import { IoPlaySharp, IoStopSharp } from "react-icons/io5";
 
 
@@ -52,16 +46,6 @@ let initOptions = {
   "height": 512,
 };
 
-const promptExamples = [
-  "Anime",
-  "Star wars",
-  "Pencil drawing",
-  "Underwater",
-  "Pixar cartoon, cg",
-  "On fire",
-  "White marble statues"
-]
-
 const Home = () => {
   const pcRef = useRef<RTCPeerConnection>();
   const dcRef = useRef<RTCDataChannel>();
@@ -86,7 +70,6 @@ const Home = () => {
   const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
   const toast = useToast()
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
-
 
 
   let called = 0;
@@ -261,6 +244,7 @@ const Home = () => {
       console.log("Negotiating...");
       getLocalStream().then(() => {
         if (remoteVideoRef.current) {
+          console.log("updating options")
           updateInitOptions();
           negotiate().then(() => { 
             console.log("negotiated");
@@ -345,10 +329,31 @@ const Home = () => {
     if (!videoContainerRef.current || !isStreaming) return;
 
     console.log("resizing")
-    console.log(videoContainerRef.current?.offsetWidth)
-    handleChange("width", videoContainerRef.current?.offsetWidth);
-    handleChange("height", videoContainerRef.current?.offsetHeight);
-  },[isStreaming]);
+    
+
+    let width = videoContainerRef.current?.offsetWidth
+    let height = videoContainerRef.current?.offsetHeight
+
+    const dar = width / height;
+    if (dar == 1) {
+      width = 768;
+      height = 768;
+    } else if (dar > 1) {
+      width = 768;
+      height = 768 / dar;
+    } else {
+      width = 768 * dar;
+      height = 768;
+    }
+
+    width = Math.round( width/ 16) * 16;
+    height = Math.round( height/ 16) * 16;
+    // console.log("options width", options.width, "height", options.height, "width", width, "height", height)
+    handleChange("width", width);
+    handleChange("height", height);
+    
+    
+  },[isStreaming,orientation]);
 
   useEffect(() => {
     window.addEventListener('resize', setWindowDimensions);
@@ -358,8 +363,9 @@ const Home = () => {
   }, [isStreaming])
 
   const expandPrompt = (random: boolean = false) => {
-    setGeneratingPrompt(true);
     console.log("random " + random);
+
+    random ? setGeneratingPrompt(true) : setGeneratingPromptMix(true);
 
     chain.invoke({
       text: random? "A random subject" : options.prompt,
@@ -367,6 +373,7 @@ const Home = () => {
       console.log(res);
       handleChange("prompt", res.value.trim());
       setGeneratingPrompt(false);
+      setGeneratingPromptMix(false);
     }).catch((e) => {
       console.log(e);
     })
@@ -418,6 +425,13 @@ const Home = () => {
 
   }}
 
+  const [generatingPromptMix, setGeneratingPromptMix] = useState(false);
+  const [domLoaded, setDomLoaded] = useState(false);
+  useEffect(() => {
+    setDomLoaded(true);
+    console.log("dom loaded")
+  },[])
+
 
   return (
 
@@ -433,12 +447,12 @@ const Home = () => {
         alignItems={["center","stretch"]}
         alignContent={["center","stretch"]}
       >   
-            <Box ref={videoContainerRef} flex={'auto'} maxH={['90vh', '100vh']} width={['full','auto']} h={'100%'} bgColor={'black'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
-                <Box visibility={isStreaming ? 'visible': 'hidden'} height={['initial','auto', 'auto']}  flex={1} >
-                  <video style={{width: "100%", height: "100%"}} ref={remoteVideoRef} autoPlay playsInline />
+            <Box ref={videoContainerRef} flex={'auto'} maxH={['90vh', '100vh']} width={['full','auto']} h={'100%'} position='relative' onClick={isStreaming ? onToggle : ()=>{}}>
+                <Box visibility={isStreaming ? 'visible': 'hidden'} height={['100%','100%', 'auto']}  flex={1} backgroundSize={'cover'} >
+                  <video style={{width: "100%", height: "100%", position: 'absolute'}} ref={remoteVideoRef}  autoPlay playsInline />
                 </Box>
                 <AbsoluteCenter>
-                  {isConnecting && (
+                  {(isConnecting || !domLoaded ) && (
                     <Spinner size="md" color="white" />
                   )}
                   {!isStreaming && !isConnecting && (
@@ -448,6 +462,8 @@ const Home = () => {
                     colorScheme='red'
                     aria-label='Done'
                     fontSize='20px'
+                    hidden={!domLoaded}
+                    disabled={!domLoaded}
                     pl={'4px'}
                     icon={<IoPlaySharp/>}
                     onClick={() => playPromise()}
@@ -457,7 +473,7 @@ const Home = () => {
                 </AbsoluteCenter>
                 <Fade in={isOpen} onHoverStart={onOpen} onHoverEnd={onClose}>
                   <Box
-                    p={2}
+                    m={[2, 2]}
                     color='white'
                     opacity={isOpen? 0.6 : 0}
                     bottom={0}
@@ -500,22 +516,15 @@ const Home = () => {
                 </TabList>
                 <TabPanels>
                   <TabPanel>
-                    {/* <Select size={['xs','sm']} placeholder="Example prompts..." isDisabled={!isStreaming} onChange={(val) => handleChange("prompt", val.target.value)}>
-                      {promptExamples.map((prompt) => (
-                        <option key={prompt} value={prompt}>{prompt}</option>
-                      ))}
-                    </Select> */}
-
-                    <Box mt={1} >
-                      <Textarea minH={[16,32]} fontSize={'sm'} isDisabled={!isStreaming || generatingPrompt} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
+                    <Box >
+                      <Textarea minH={[24,40]} fontSize={'sm'} isDisabled={!isStreaming || generatingPrompt} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
                     </Box>
-                    <ButtonGroup mt={2} size={['xs','sm']} isAttached variant="outline">
-                      <Button leftIcon={generatingPrompt ? <Spinner size='xs'/> : <FaDice/>} isDisabled={!isStreaming} onClick={() => expandPrompt(true)}>
-                        Random
-                        
-                      </Button>
-                      <Button isDisabled={!isStreaming} onClick={() => expandPrompt()}>Expand</Button>
-                      <Button isDisabled={!isStreaming} onClick={() => handleChange("prompt", "")}>Clear</Button>
+                    <ButtonGroup mt={2} w={'100%'} size={['xs','sm']} variant="outline">
+                        <Button leftIcon={generatingPrompt ? <Spinner size='xs'/> : <FaDice/>} isDisabled={!isStreaming || generatingPrompt || generatingPromptMix } onClick={() => expandPrompt(true)}>
+                          Random
+                        </Button>
+                        <Button leftIcon={generatingPromptMix ? <Spinner size='xs'/> : <FaShuffle/>} isDisabled={!isStreaming || generatingPrompt || generatingPromptMix} onClick={() => expandPrompt()}>Expand</Button>
+                      <IconButton aria-label="Clear" isDisabled={!isStreaming} onClick={() => handleChange("prompt", "")} icon={<FaTrash/>}/>
                     </ButtonGroup>
                   </TabPanel>
                   <TabPanel>
