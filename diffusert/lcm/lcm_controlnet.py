@@ -395,10 +395,10 @@ class LatentConsistencyModelPipeline_controlnet(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        controlnet_conditioning_scale: Union[float, List[float]] = 0.8,
+        controlnet_conditioning_scale: Union[float, List[float]] = 4,
         guess_mode: bool = True,
         control_guidance_start: Union[float, List[float]] = 0.0,
-        control_guidance_end: Union[float, List[float]] = 1.0,
+        control_guidance_end: Union[float, List[float]] = 1,
     ):
         controlnet = (
             self.controlnet._orig_mod
@@ -479,7 +479,7 @@ class LatentConsistencyModelPipeline_controlnet(DiffusionPipeline):
                     num_images_per_prompt=num_images_per_prompt,
                     device=device,
                     dtype=controlnet.dtype,
-                    do_classifier_free_guidance=do_classifier_free_guidance,
+                    do_classifier_free_guidance=True,
                     guess_mode=guess_mode,
                 )
 

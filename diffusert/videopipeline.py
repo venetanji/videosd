@@ -1,12 +1,6 @@
 import numpy as np
-import time
 import torch
 
-#from .lcm.lcm_pipeline import LatentConsistencyModelPipeline
-#from lcm.lcm_i2i_pipeline import LatentConsistencyModelImg2ImgPipeline
-from lcm.lcm_reference_pipeline import LatentConsistencyModelPipeline_reference, LCMScheduler_X
-from diffusers import AutoencoderKL, UNet2DConditionModel
-from transformers import CLIPTokenizer, CLIPTextModel, CLIPImageProcessor
 from lcm.lcm_controlnet import LatentConsistencyModelPipeline_controlnet
 from lcm.canny_gpu import SobelOperator 
 from diffusers import AutoencoderTiny, ControlNetModel
@@ -61,9 +55,10 @@ class VideoSDPipeline:
         #         pretrained_model_name_or_path="SimianLuo/LCM_Dreamshaper_v7",
         #         safety_checker=None
         #     )
+        # qrcode monster: "monster-labs/control_v1p_sd15_qrcode_monster"
 
         controlnet_canny = ControlNetModel.from_pretrained(
-            "lllyasviel/control_v11p_sd15_canny", torch_dtype=torch.float16
+            controlnet_model, torch_dtype=torch.float16
         ).to(self.device)
 
         self.canny_torch = SobelOperator(device=self.device)
@@ -81,9 +76,6 @@ class VideoSDPipeline:
         self.model.vae = AutoencoderTiny.from_pretrained(
             "madebyollin/taesd", torch_dtype=torch.float16, use_safetensors=True
         )
-
-        # self.model = LatentConsistencyModelPipeline_reference(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=None, feature_extractor=feature_extractor)
-        # self.model.safety_checker = None
         self.model.to(torch.device(self.device))
         self.model.unet.to(memory_format=torch.channels_last)
         return self.model
@@ -92,45 +84,18 @@ class VideoSDPipeline:
     def infer(
         self,
         img,
-        prompt,
-        negative_prompt=["deformed iris, deformed pupils, semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime, mutated hands and fingers, deformed, distorted, disfigured, poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, disconnected limbs, mutation, mutated, ugly, disgusting, amputation"],
+        prompt=["pixar, cg"],
         height=360,
         width=640,
         strength=0.4,
-        num_of_infer_steps=20,  
+        steps=20,  
         guidance_scale=7.5,
-        seed=42,
-        warmup=False,
-        verbose=False,
-        ref_frame=False,
         ref=False,
-        set_ref=False,
-        style_fidelity = 1,
+        style_fidelity=0.0,
+        controlnet=False,
+        seed=42,
         controlnet_scale = 1,
-        controlnet=True
     ):
-        """
-        Run the diffusion pipeline.
-
-        Args:
-            prompt (str):
-                The text prompt to guide image generation.
-            negative_prompt (str):
-                The prompt not to guide the image generation.
-            image_height (int):
-                Height (in pixels) of the image to be generated. Must be a multiple of 8.
-            image_width (int):
-                Width (in pixels) of the image to be generated. Must be a multiple of 8.
-            seed (int):
-                Seed for the random generator
-            warmup (bool):
-                Indicate if this is a warmup run.
-            verbose (bool):
-                Verbose in logging
-        """
-        assert len(prompt) == len(negative_prompt)
-        # if image width and height don't match
-
 
         # center crop image to match desired aspect ratio
         if img.width / img.height > width / height:
@@ -149,26 +114,20 @@ class VideoSDPipeline:
             bottom = (img.height + new_height) / 2
         img = img.crop((left, top, right, bottom))
         img = img.resize((width, height), resample=Image.Resampling.LANCZOS)
-        #ref_frame = ref_frame.resize((width, height), resample=Image.Resampling.LANCZOS)
-        assert guidance_scale > 1.0
-        self.guidance_scale = guidance_scale
-        #canny_image = np.array(img)
-        canny_image = self.canny_torch(img, 0.31, 0.8)
+
+        canny_image = self.canny_torch(img, 0.11, 0.8)
         self.generator.set_state(self.generator_init_state)
         self.generator.manual_seed(seed) 
         np.random.seed(seed)
 
         kwarg_inputs = dict(
             prompt=prompt,
-            #negative_prompt=negative_prompt,
             height=height,
             width=width,
-            num_inference_steps=num_of_infer_steps,
+            num_inference_steps=steps,
             image=img,
             control_image=canny_image,
-            #ref_image=ref_frame,
-            #style_fidelity=style_fidelity,
-            controlnet_conditioning_scale=style_fidelity,
+            controlnet_conditioning_scale=controlnet_scale,
             generator=self.generator,
             strength=strength
         )

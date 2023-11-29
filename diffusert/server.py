@@ -104,19 +104,12 @@ class VideoSDTrack(MediaStreamTrack):
     async def diffuse(self,frame,gpu=0):
 
         self.last_gen_start[gpu] = time.time()
-        img = await pipelines[gpu].infer.remote(frame.to_image(),[self.options['prompt']],
-            ref=self.options['ref'],
-            seed=self.options['seed'],
-            num_of_infer_steps = self.options['steps'],
-            guidance_scale = self.options['guidance_scale'],
-            strength = self.options['strength'],
-            ref_frame = self.ref_frame,
-            style_fidelity = self.options['style_fidelity'],
-            controlnet = self.options['controlnet'],
-            width = self.options['width'],
-            height = self.options['height']
-        )
-        generating[gpu] = False
+        try:
+            img = await pipelines[gpu].infer.remote(frame.to_image(),**self.options)
+        
+        finally:
+            generating[gpu] = False
+
         self.avg_gen_time = 0.95*self.avg_gen_time + 0.05*(time.time() - self.last_gen_start[gpu])
         sys.stdout.write("\rAverage gentime %f" % self.avg_gen_time)
         if self.options['ref']:
@@ -181,6 +174,8 @@ async def offer(request):
                     message['steps'] = int(message['steps'])
                 if 'guidance_scale' in message:
                     message['guidance_scale'] = float(message['guidance_scale'])
+                if 'controlnet_scale' in message:
+                    message['controlnet_scale'] = float(message['controlnet_scale'])
                 if 'style_fidelity' in message:
                     message['style_fidelity'] = float(message['style_fidelity'])
                 if 'seed' in message:
@@ -340,6 +335,11 @@ if __name__ == "__main__":
                     sessions += 1 if receiver.transport.state == "connected" else 0
                 for sender in pc.getSenders():
                     senders_count += 1
+
+            if sessions == 0:
+                for gpu in range(gpu_num):
+                    generating[gpu] = False
+
 
             print("Receivers", receivers_count)
             print("Senders", senders_count)

@@ -10,3 +10,10 @@ av
 aiortc
 torchvision
 ray
+langchain
+langchain_experimental
+langserve
+uvicorn
+fastapi
+sse_starlette
+pydantic==1.10.9
