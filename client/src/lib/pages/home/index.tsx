@@ -1,5 +1,5 @@
 'use client';
-
+import { RemoteRunnable } from "langchain/runnables/remote";
 import { Flex, Box, AspectRatio, Tabs, Tab, TabList, TabPanel, TabPanels, IconButton, ButtonGroup, SimpleGrid, GridItem, FormControl, FormLabel, Input, Textarea, RangeSlider, VStack, Select, Button, Spacer, Skeleton, AbsoluteCenter, useDisclosure, Spinner, Fade, useToast } from '@chakra-ui/react';
 import { Html } from 'next/document';
 import { userAgentFromString } from 'next/server';
@@ -23,6 +23,11 @@ import { IoPlaySharp, IoStopSharp } from "react-icons/io5";
 
 import SliderParameter from '~/lib/components/SliderParameter';
 
+const chain = new RemoteRunnable({
+  url: `http://blendotron.art/llama-chat/`,
+  options:{timeout: 300000},
+});
+
 const pc_config = {
 	iceServers: [
 		{
@@ -34,14 +39,15 @@ const pc_config = {
 };
 
 let initOptions = {
-  "prompt": "Pixar cartoon, cg",
-  "strength": 0.4,
+  "prompt": "A dreamy, ethereal landscape filled with whimsical, glowing flora and fauna",
+  "strength": 0.6,
   "guidance_scale": 5,
   "steps": 4,
   "seed": 23,
   "ref": false,
   "style_fidelity": 1,
   "controlnet": true, 
+  "controlnet_scale": 2,
   "width": 512,
   "height": 512,
 };
@@ -241,8 +247,12 @@ const Home = () => {
   const [startVideo, setStartVideo] = useState(false);
 
   useEffect(() => {
-    console.log(isConnecting)
+    console.log("Is connecting: " + isConnecting)
+    console.log("Start video: " + startVideo)
     if (!isConnecting && startVideo) {
+      
+      console.log("Is connecting in if: " + isConnecting)
+      console.log("Start video in if: " + startVideo)
       setIsConnecting(true);
       console.log("Negotiating...");
       getLocalStream().then(() => {
@@ -272,7 +282,7 @@ const Home = () => {
         pcRef.current?.close();
       }
     }
-  }, [startVideo, facingMode]);
+  }, [startVideo]);
 
   const handleChange = (name: string, value: any) => {
     setOptions(prevState => ({
@@ -316,26 +326,103 @@ const Home = () => {
     }
     
     console.log("flipping camera", facingMode)
-    getLocalStream();
+    
   };
 
-  const setWindowDimensions = useCallback(() => {
-    if (!videoContainerRef.current) return;
+  useEffect(() => {
+    if (isStreaming)
+      console.log(isStreaming)
+      getLocalStream();
+  }, [facingMode]);
 
-    
-    handleChange("width", videoContainerRef.current.offsetWidth);
-    handleChange("height", videoContainerRef.current.offsetHeight);
-  },[handleChange])
+  const setWindowDimensions = useCallback(() => {
+    console.log("resizing")
+    console.log(isStreaming)
+    console.log(videoContainerRef.current)
+    if (!videoContainerRef.current || !isStreaming) return;
+
+    console.log("resizing")
+    console.log(videoContainerRef.current?.offsetWidth)
+    handleChange("width", videoContainerRef.current?.offsetWidth);
+    handleChange("height", videoContainerRef.current?.offsetHeight);
+  },[isStreaming]);
 
   useEffect(() => {
     window.addEventListener('resize', setWindowDimensions);
     return () => {
       window.removeEventListener('resize', setWindowDimensions)
     }
-  }, [])
+  }, [isStreaming])
 
   const { isOpen, onToggle, onOpen, onClose } = useDisclosure()
-  const toast = useToast()  
+  const toast = useToast()
+
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
+
+
+  const expandPrompt = (random: boolean = false) => {
+    setGeneratingPrompt(true);
+    console.log("random " + random);
+
+    chain.invoke({
+      text: random? "A random subject" : options.prompt,
+    }).then((res: any) => {
+      console.log(res);
+      handleChange("prompt", res.value.trim());
+      setGeneratingPrompt(false);
+    }).catch((e) => {
+      console.log(e);
+    })
+  }
+
+  const playPromise = async () => {
+
+    // Create an example promise that resolves in 5s
+    const permissionObj = await navigator.permissions.query({name: 'camera' as PermissionName});
+
+    console.log(permissionObj)
+    if (permissionObj.state === 'granted') {
+      console.log("already granted")
+      setStartVideo(true);
+      //setStartVideo(true);
+      //permission has already been granted, no prompt is shown
+    } else if (permissionObj.state === 'prompt' || permissionObj.state === 'denied') {
+      const getCameraPermissionsPromise = new Promise((resolve, reject) => {
+            permissionObj.onchange = (e) => {
+              if (!e.target) resolve("error");
+              const permissionStatus = e.target as PermissionStatus;
+              if (!permissionStatus.state) resolve("denied");
+              if (permissionStatus.state == "granted") {
+                setStartVideo(true);
+                resolve(permissionObj.state);
+              } else {
+                setStartVideo(false);
+                reject("denied");
+              }
+            }
+            getLocalStream().then(() => {
+              setStartVideo(true);
+              console.log("prompting for camera access")
+            }).catch((e) => {
+              console.log(e);
+              reject("denied");
+            })
+            //there's no peristent permission registered, will be showing the prompt
+          
+          console.log(permissionObj.state);
+        })
+      toast.promise(getCameraPermissionsPromise, {
+        success: { title: 'Camera access acquired!', description: 'Good to go!', duration: 1000 },
+        error: { title: 'Camera Access required!', description: "Camera access is required to use this app. We will not store or record your video feed in any way. You can reset the camera permission for this site in your browser's settings." },
+        loading: { title: 'Plese allow us to use your camera.', description: 'Your video stream will not be recorded.' },
+      })
+        
+
+    // Will display the loading toast until the promise is either resolved
+    // or rejected.
+
+  }}
+
 
   return (
 
@@ -368,51 +455,7 @@ const Home = () => {
                     fontSize='20px'
                     pl={'4px'}
                     icon={<IoPlaySharp/>}
-                    onClick={async () => {
-                      // Create an example promise that resolves in 5s
-                      const permissionObj = await navigator.permissions.query({name: 'camera' as PermissionName});
-
-                      console.log(permissionObj)
-                      if (permissionObj.state === 'granted') {
-                        setStartVideo(true);
-                        //setStartVideo(true);
-                        //permission has already been granted, no prompt is shown
-                      } else if (permissionObj.state === 'prompt' || permissionObj.state === 'denied') {
-                        const getCameraPermissionsPromise = new Promise((resolve, reject) => {
-                              permissionObj.onchange = (e) => {
-                                if (!e.target) resolve("error");
-                                const permissionStatus = e.target as PermissionStatus;
-                                if (!permissionStatus.state) resolve("denied");
-                                if (permissionStatus.state == "granted") {
-                                  setStartVideo(true);
-                                  resolve(permissionObj.state);
-                                } else {
-                                  setStartVideo(false);
-                                  reject("denied");
-                                }
-                              }
-                              getLocalStream().then(() => {
-                                setStartVideo(true);
-                                console.log("prompting for camera access")
-                              }).catch((e) => {
-                                console.log(e);
-                                reject("denied");
-                              })
-                              //there's no peristent permission registered, will be showing the prompt
-                            
-                            console.log(permissionObj.state);
-                          })
-                        toast.promise(getCameraPermissionsPromise, {
-                          success: { title: 'Camera access acquired!', description: 'Good to go!', duration: 1000 },
-                          error: { title: 'Camera Access required!', description: "Camera access is required to use this app. We will not store or record your video feed in any way. You can reset the camera permission for this site in your browser's settings." },
-                          loading: { title: 'Plese allow us to use your camera.', description: 'Your video stream will not be recorded.' },
-                        })
-                          
-                
-                      // Will display the loading toast until the promise is either resolved
-                      // or rejected.
-
-                    }}}
+                    onClick={playPromise}
                     
                   />
                   )}
@@ -454,7 +497,7 @@ const Home = () => {
 
 
 
-              <Tabs flex={'initial'} size={['sm','md']} minH={160} isFitted w={['full','auto']}>
+              <Tabs flex={'initial'} size={['sm','md']} minH={190} isFitted w={['full','auto']}>
                 <TabList>
                   <Tab>Prompt</Tab>
                   <Tab>Diffusion</Tab>
@@ -462,23 +505,34 @@ const Home = () => {
                 </TabList>
                 <TabPanels>
                   <TabPanel>
-                    <Select size={['xs','sm']} placeholder="Example prompts..." isDisabled={!isStreaming} onChange={(val) => handleChange("prompt", val.target.value)}>
+                    {/* <Select size={['xs','sm']} placeholder="Example prompts..." isDisabled={!isStreaming} onChange={(val) => handleChange("prompt", val.target.value)}>
                       {promptExamples.map((prompt) => (
                         <option key={prompt} value={prompt}>{prompt}</option>
                       ))}
-                    </Select>
+                    </Select> */}
 
                     <Box mt={1} >
-                      <Textarea minH={16} fontSize={'sm'} isDisabled={!isStreaming} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
+                      <Textarea minH={[16,32]} fontSize={'sm'} isDisabled={!isStreaming || generatingPrompt} p={[2,2]} placeholder="Type your prompt here..." onChange={(val) => handleChange("prompt", val.target.value)} value={options.prompt} /> 
                     </Box>
+                    <ButtonGroup mt={2} size={['xs','sm']} isAttached variant="outline">
+                      <Button leftIcon={generatingPrompt ? <Spinner size='xs'/> : <FaDice/>} isDisabled={!isStreaming} onClick={() => expandPrompt(true)}>
+                        Random
+                        
+                      </Button>
+                      <Button isDisabled={!isStreaming} onClick={() => expandPrompt()}>Expand</Button>
+                      <Button isDisabled={!isStreaming} onClick={() => handleChange("prompt", "")}>Clear</Button>
+                    </ButtonGroup>
                   </TabPanel>
                   <TabPanel>
                   <SliderParameter label="steps" isDisabled={!isStreaming} min={1} max={12} step={1} defaultValue={options.steps} onChange={(val) => handleChange("steps", val)}>
                     Steps: {options.steps}
                   </SliderParameter>
 
-                  <SliderParameter label="strength" isDisabled={!isStreaming} min={0} max={1} step={0.02} defaultValue={options.strength} onChange={(val) => handleChange("strength", val)}>
+                  <SliderParameter label="strength" isDisabled={!isStreaming} min={0.05} max={1} step={0.02} defaultValue={options.strength} onChange={(val) => handleChange("strength", val)}>
                     Strength: {options.strength}
+                  </SliderParameter>
+                  <SliderParameter label="controlnet_scale" isDisabled={!isStreaming} min={0.05} max={3} step={0.02} defaultValue={options.controlnet_scale} onChange={(val) => handleChange("controlnet_scale", val)}>
+                    Controlnet: {options.controlnet_scale}
                   </SliderParameter>
                   <Flex mt={4} direction="row" align="center" justify="left" width="full">
                     <FormLabel fontSize={['xs','initial']} mb={0}>Seed:</FormLabel>
