@@ -24,6 +24,28 @@ services:
       - ASR_MODEL=small
     profiles:
       - speech
+  
+  promptgen: &promptgen
+    <<: [*x-base,*x-gpu]
+    image: videosd-backend
+    expose:
+      - 8000
+    entrypoint: "uvicorn promptgen:app --host 0.0.0.0"
+    volumes:
+      - ./llms:/models
+      - ./diffusert:/workspace/diffusert/
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    profiles:
+      - production
+
+  promptgen-dev:
+    <<: *promptgen
+    image: videosd-backend
+    entrypoint: "sleep infinity"
+
+    profiles:
+      - ''
+      - dev
 
   certbot:
     image: certbot/certbot:latest
@@ -38,7 +60,12 @@ services:
     working_dir: /app
     volumes:
       - ./client:/app
-    command: "sleep infinity"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        npm install
+        npm run build
     profiles:
       - build
 
@@ -54,6 +81,7 @@ services:
       - 443:443
     environment:
       - BACKEND_HOST=backend
+      - PROMPTGEN_HOST=promptgen
     profiles:
       - production
 
@@ -61,6 +89,7 @@ services:
     <<: *frontend
     environment:
       - BACKEND_HOST=backend-dev
+      - PROMPTGEN_HOST=promptgen-dev
     profiles:
       - ''
       - dev
