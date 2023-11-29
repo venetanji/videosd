@@ -7,7 +7,7 @@ type RootLayoutProps = {
   children: React.ReactNode;
 };
 
-const APP_NAME = 'VideoSD - Blendotron.art';
+const APP_NAME = 'RedCam - VideoSD - redcam.redmond.ai';
 
 export const metadata: Metadata = {
   title: { default: APP_NAME, template: '%s' },
@@ -22,12 +22,12 @@ export const metadata: Metadata = {
     telephone: false,
   },
   openGraph: {
-    url: 'https://blendotron.art',
-    title: 'blendotron.art',
+    url: 'https://redcam.redmond.ai/og.png',
+    title: 'RedCam',
     description: 'StableDiffusion over webRTC',
     images: {
-      url: 'https://og-image.sznm.dev/**nextarter-chakra**.sznm.dev.png?theme=dark&md=1&fontSize=125px&images=https%3A%2F%2Fsznm.dev%2Favataaars.svg&widths=250',
-      alt: 'nextarter-chakra.sznm.dev og-image',
+      url: 'https://redcam.redmond.ai/og.png',
+      alt: 'redcam.redmond.ai',
     },
   },
   twitter: {
