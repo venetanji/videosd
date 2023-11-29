@@ -1,6 +1,6 @@
 /** @type {import('next-sitemap').IConfig} */
 const NextSitemapConfig = {
-  siteUrl: "https://nextarter-chakra.sznm.dev",
+  siteUrl: "https://redcam.redmond.ai",
   generateRobotsTxt: true,
 };
 
