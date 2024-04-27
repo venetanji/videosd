@@ -1,7 +1,14 @@
 # videosd
 
 A webrtc video interface to StableDiffusion pipelines. Built for https://backdropbuild.com/builds/v2/videosd
+
+Check the youtube video below for a demo of how it works.
+
+
 [![Videosd Demo](http://img.youtube.com/vi/1qMRPK1l_xw/0.jpg)](http://www.youtube.com/watch?v=1qMRPK1l_xw "Videosd Demo - Backdropbuild v2")
+
+
+Live demo (1 old GPU): https://blendotron.art/
 
 
 # Run (dev)
